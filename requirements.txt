@@ -5,3 +5,4 @@ youtube-search-python
 pytube
 yt-dlp
 requests
+bs4
