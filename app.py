@@ -24,3 +24,6 @@ def stream_music(url: str):
     with YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=False)
         return {"title": info['title'], "url": info['url']}
+
+
+# uvicorn app:app --reload
