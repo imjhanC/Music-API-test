@@ -7,6 +7,10 @@ from typing import List, Dict, Optional
 import asyncio
 import concurrent.futures
 from pydantic import BaseModel
+import requests
+import json
+import time
+import random
 
 app = FastAPI(title="Music Streaming API", version="1.0.0")
 
@@ -62,6 +66,34 @@ def format_views_fast(view_count):
     else:
         return f"{view_count:,} views"
 
+def get_enhanced_ydl_opts():
+    """Get enhanced yt-dlp options to avoid bot detection"""
+    return {
+        'format': 'bestaudio[abr>0]/bestaudio/best',
+        'quiet': True,
+        'no_warnings': True,
+        'ignoreerrors': True,
+        'geo_bypass': True,
+        'socket_timeout': 30,
+        'retries': 3,
+        'sleep_interval_requests': 1,
+        'sleep_interval_subtitles': 1,
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['android', 'web'],
+                'skip': ['dash', 'hls']
+            }
+        },
+        # Add user agent rotation
+        'http_headers': {
+            'User-Agent': random.choice([
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            ])
+        }
+    }
+
 def perform_search_sync(query: str) -> List[Dict]:
     """Perform YouTube search using yt-dlp"""
     if not query:
@@ -70,7 +102,7 @@ def perform_search_sync(query: str) -> List[Dict]:
     try:
         print(f"Searching for: {query}")
         
-        # Streamlined yt-dlp options for speed
+        # Enhanced search options
         search_opts = {
             'quiet': True,
             'no_warnings': True,
@@ -79,10 +111,18 @@ def perform_search_sync(query: str) -> List[Dict]:
             'ignoreerrors': True,
             'geo_bypass': True,
             'noplaylist': True,
-            'socket_timeout': 8,
-            'retries': 1,
+            'socket_timeout': 15,
+            'retries': 2,
             'format': 'best',
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android'],
+                }
+            }
         }
+        
+        # Add random delay to avoid rate limiting
+        time.sleep(random.uniform(0.5, 1.5))
         
         # Fetch 10 results to filter down to 5 good ones
         fetch_count = 10
@@ -150,58 +190,119 @@ def perform_search_sync(query: str) -> List[Dict]:
         print(f"yt-dlp search failed: {str(e)}")
         return []
 
+def get_stream_url_with_fallbacks(video_id: str) -> Dict:
+    """Get streaming URL with multiple fallback strategies"""
+    youtube_url = f"https://www.youtube.com/watch?v={video_id}"
+    
+    # Strategy 1: Try with enhanced options and different clients
+    strategies = [
+        # Android client (most reliable)
+        {
+            **get_enhanced_ydl_opts(),
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android'],
+                    'skip': ['dash', 'hls']
+                }
+            }
+        },
+        # Web client with age gate bypass
+        {
+            **get_enhanced_ydl_opts(),
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['web'],
+                    'skip': ['dash', 'hls']
+                }
+            }
+        },
+        # iOS client
+        {
+            **get_enhanced_ydl_opts(),
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['ios'],
+                    'skip': ['dash', 'hls']
+                }
+            }
+        },
+        # Embed method
+        {
+            **get_enhanced_ydl_opts(),
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['web_embedded'],
+                }
+            }
+        }
+    ]
+    
+    for i, opts in enumerate(strategies):
+        try:
+            print(f"Trying strategy {i+1} for video {video_id}")
+            
+            # Add random delay between attempts
+            if i > 0:
+                time.sleep(random.uniform(1, 3))
+            
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(youtube_url, download=False)
+                
+                if info and info.get('url'):
+                    print(f"Strategy {i+1} successful!")
+                    return {
+                        'stream_url': info['url'],
+                        'title': info.get('title', 'Unknown Title'),
+                        'duration': info.get('duration', 0),
+                        'thumbnail_url': f"https://img.youtube.com/vi/{video_id}/mqdefault.jpg"
+                    }
+                    
+        except Exception as e:
+            error_msg = str(e).lower()
+            print(f"Strategy {i+1} failed: {e}")
+            
+            # If it's a bot detection error, continue to next strategy
+            if any(keyword in error_msg for keyword in ['bot', 'sign in', '429', 'captcha']):
+                continue
+            # If it's a different error, we might want to break early
+            elif 'private' in error_msg or 'unavailable' in error_msg:
+                break
+    
+    raise Exception(f"All extraction strategies failed for video {video_id}")
+
 def get_stream_url_sync(video_id: str) -> Dict:
     """Get streaming URL for a specific video"""
     try:
-        # Configure yt-dlp options for audio streaming
-        base_ydl_opts = {
-            'format': 'bestaudio[abr>0]/bestaudio/best',
-            'quiet': True,
-            'no_warnings': True,
-        }
-        
-        youtube_url = f"https://www.youtube.com/watch?v={video_id}"
-        
-        def extract_with_cookies(url: str):
-            # First try without cookies
-            try:
-                with yt_dlp.YoutubeDL(base_ydl_opts) as ydl:
-                    return ydl.extract_info(url, download=False)
-            except Exception as e_first:
-                lower_msg = str(e_first).lower()
-                need_cookies = ('confirm you' in lower_msg and 'bot' in lower_msg) or \
-                             ('sign in to confirm' in lower_msg) or ('429' in lower_msg)
-                if not need_cookies:
-                    raise
-                
-                # Try common browsers for cookies
-                for browser_name in ['edge', 'chrome', 'chromium', 'brave', 'firefox']:
-                    try:
-                        opts = dict(base_ydl_opts)
-                        opts['cookiesfrombrowser'] = (browser_name,)
-                        with yt_dlp.YoutubeDL(opts) as ydl:
-                            return ydl.extract_info(url, download=False)
-                    except Exception:
-                        continue
-                
-                # If all cookie attempts fail, re-raise the original
-                raise e_first
-        
-        info = extract_with_cookies(youtube_url)
-        
-        return {
-            'stream_url': info['url'],
-            'title': info.get('title', 'Unknown Title'),
-            'duration': info.get('duration', 0),
-            'thumbnail_url': f"https://img.youtube.com/vi/{video_id}/mqdefault.jpg"
-        }
+        return get_stream_url_with_fallbacks(video_id)
         
     except Exception as e:
-        print(f"Error getting stream URL: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to get stream URL: {str(e)}")
+        error_msg = str(e)
+        print(f"Error getting stream URL: {error_msg}")
+        
+        # Provide more specific error messages
+        if 'bot' in error_msg.lower() or 'sign in' in error_msg.lower():
+            raise HTTPException(
+                status_code=429, 
+                detail="YouTube blocked the request. Please try again in a few minutes."
+            )
+        elif 'private' in error_msg.lower():
+            raise HTTPException(
+                status_code=403, 
+                detail="This video is private or unavailable."
+            )
+        elif 'unavailable' in error_msg.lower():
+            raise HTTPException(
+                status_code=404, 
+                detail="Video not found or has been removed."
+            )
+        else:
+            raise HTTPException(
+                status_code=500, 
+                detail=f"Failed to get stream URL: {str(e)}"
+            )
 
 # Thread pool for async operations
-executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)  # Reduced to avoid rate limits
 
 @app.get("/")
 async def root():
@@ -251,8 +352,19 @@ async def health_check():
     """Health check endpoint"""
     return {"status": "healthy", "service": "Music Streaming API"}
 
+# Add a test endpoint to check if yt-dlp is working
+@app.get("/test/{video_id}")
+async def test_extraction(video_id: str):
+    """Test endpoint to debug extraction issues"""
+    try:
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(executor, get_stream_url_sync, video_id)
+        return {"success": True, "data": result}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
 if __name__ == "__main__":
-    print("Starting Music Streaming API...")
+    print("Starting Enhanced Music Streaming API...")
     print("API will be available at: http://localhost:8000")
     print("Documentation at: http://localhost:8000/docs")
     
