@@ -1,3 +1,7 @@
 fastapi
 uvicorn
+pydantic
+youtube-search-python
+pytube
 yt-dlp
+requests
