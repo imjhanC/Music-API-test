@@ -1,272 +1,265 @@
-from fastapi import FastAPI, Query, HTTPException
-from yt_dlp import YoutubeDL
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 import yt_dlp
-import uvicorn 
+import uvicorn
+from typing import List, Dict, Optional
+import asyncio
+import concurrent.futures
+from pydantic import BaseModel
 
-app = FastAPI()
+app = FastAPI(title="Music Streaming API", version="1.0.0")
 
-class MusicSearcher:
-    def __init__(self):
-        pass
-    
-    def format_duration_fast(self, duration):
-        """Format duration in seconds to MM:SS or HH:MM:SS format"""
-        if not duration or duration <= 0:
-            return "0:00"
-        
-        hours = int(duration // 3600)
-        minutes = int((duration % 3600) // 60)
-        seconds = int(duration % 60)
-        
-        if hours > 0:
-            return f"{hours}:{minutes:02d}:{seconds:02d}"
-        else:
-            return f"{minutes}:{seconds:02d}"
-    
-    def format_views_fast(self, view_count):
-        """Format view count to human readable format"""
-        if not view_count:
-            return "0 views"
-        
-        if view_count >= 1_000_000_000:
-            return f"{view_count / 1_000_000_000:.1f}B views"
-        elif view_count >= 1_000_000:
-            return f"{view_count / 1_000_000:.1f}M views"
-        elif view_count >= 1_000:
-            return f"{view_count / 1_000:.1f}K views"
-        else:
-            return f"{view_count} views"
-    
-    def perform_search(self, query, offset=0, exclude_ids=None, batch_size=10):
-        """Perform the actual search using yt-dlp - now supports pagination and exclusion."""
-        if not query:
-            return []
-        
-        if exclude_ids is None:
-            exclude_ids = set()
-        else:
-            exclude_ids = set(exclude_ids)
-        
-        try:
-            print(f"Searching for: {query} (offset={offset}, exclude={len(exclude_ids)})")
-            
-            # Streamlined yt-dlp options for speed - based on your working code
-            search_opts = {
-                'quiet': True,
-                'no_warnings': True,
-                'extract_flat': True,
-                'skip_download': True,
-                'ignoreerrors': True,
-                'geo_bypass': True,
-                'noplaylist': True,
-                'socket_timeout': 8,
-                'retries': 1,
-                'format': 'best',
-            }
-            
-            # Fetch more results than needed to allow for exclusion
-            fetch_count = max(batch_size * 2, 30)
-            
-            with yt_dlp.YoutubeDL(search_opts) as ydl:
-                search_results = ydl.extract_info(
-                    f"ytsearch{fetch_count + offset}:{query}",
-                    download=False
-                )
-            
-            print(f"yt-dlp response received")
-            
-            if not search_results or 'entries' not in search_results:
-                print("No entries in search results")
-                return []
-            
-            entries = search_results.get('entries', [])
-            
-            # Skip offset and filter out excluded IDs
-            filtered = []
-            seen = set()
-            
-            for entry in entries[offset:]:
-                if not entry or not entry.get('id'):
-                    continue
-                
-                vid = entry['id']
-                if vid in exclude_ids or vid in seen:
-                    continue
-                
-                seen.add(vid)
-                title = entry.get('title', 'No Title')
-                uploader = entry.get('uploader', 'Unknown')
-                duration = entry.get('duration')
-                view_count = entry.get('view_count')
-                
-                # Skip if title and uploader are the same (after case-insensitive comparison)
-                if str(title).strip().lower() == str(uploader).strip().lower():
-                    continue
-                
-                # Skip if duration is 0 or invalid
-                if not duration or duration <= 0:
-                    continue
-                
-                result = {
-                    'title': str(title).strip()[:100],
-                    'thumbnail_url': f"https://img.youtube.com/vi/{vid}/mqdefault.jpg",
-                    'videoId': vid,
-                    'uploader': str(uploader).strip()[:50] if uploader else 'Unknown',
-                    'duration': self.format_duration_fast(duration),
-                    'view_count': self.format_views_fast(view_count),
-                    'url': f"https://www.youtube.com/watch?v={vid}"
-                }
-                filtered.append(result)
-                
-                if len(filtered) >= batch_size:
-                    break
-            
-            print(f"Processed {len(filtered)} results (offset={offset})")
-            return filtered
-            
-        except Exception as e:
-            print(f"yt-dlp search failed: {str(e)}")
-            return []
-    
-    def get_stream_info(self, video_id_or_url):
-        """Get streaming URL for a video"""
-        try:
-            # More robust options for stream extraction
-            stream_opts = {
-                'format': 'bestaudio/best',
-                'quiet': True,
-                'no_warnings': True,
-                'ignoreerrors': True,
-                'geo_bypass': True,
-                'socket_timeout': 10,
-                'retries': 2,
-            }
-            
-            # Handle both video IDs and full URLs
-            if not video_id_or_url.startswith('http'):
-                url = f"https://www.youtube.com/watch?v={video_id_or_url}"
-            else:
-                url = video_id_or_url
-            
-            with yt_dlp.YoutubeDL(stream_opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-                
-                if not info:
-                    return None
-                
-                # Get the best audio format
-                formats = info.get('formats', [])
-                audio_url = None
-                
-                # Try to find the best audio-only format
-                for fmt in formats:
-                    if (fmt.get('acodec') != 'none' and 
-                        fmt.get('vcodec') == 'none' and
-                        fmt.get('url')):
-                        audio_url = fmt.get('url')
-                        break
-                
-                # Fallback to any format with audio
-                if not audio_url:
-                    for fmt in formats:
-                        if fmt.get('acodec') != 'none' and fmt.get('url'):
-                            audio_url = fmt.get('url')
-                            break
-                
-                if not audio_url:
-                    return None
-                
-                return {
-                    'title': info.get('title'),
-                    'url': audio_url,
-                    'duration': self.format_duration_fast(info.get('duration')),
-                    'uploader': info.get('uploader'),
-                    'thumbnail': info.get('thumbnail'),
-                    'view_count': self.format_views_fast(info.get('view_count'))
-                }
-                
-        except Exception as e:
-            print(f"Stream extraction failed: {str(e)}")
-            return None
+# Enable CORS for React Native
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-# Create global searcher instance
-searcher = MusicSearcher()
+class SearchResult(BaseModel):
+    title: str
+    thumbnail_url: str
+    videoId: str
+    uploader: str
+    duration: str
+    view_count: str
+    url: str
 
-@app.get("/search")
-def search_music(
-    query: str = Query(..., description="Search query for music"),
-    offset: int = Query(0, description="Offset for pagination", ge=0),
-    batch_size: int = Query(10, description="Number of results to return", ge=1, le=50),
-    exclude_ids: str = Query("", description="Comma-separated video IDs to exclude")
-):
-    """Search for music using the working yt-dlp approach"""
+class StreamResponse(BaseModel):
+    stream_url: str
+    title: str
+    duration: int
+    thumbnail_url: str
+
+def format_duration_fast(seconds):
+    """Format duration from seconds to MM:SS or HH:MM:SS"""
+    if not seconds or seconds <= 0:
+        return "0:00"
+    
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    seconds = int(seconds % 60)
+    
+    if hours > 0:
+        return f"{hours}:{minutes:02d}:{seconds:02d}"
+    else:
+        return f"{minutes}:{seconds:02d}"
+
+def format_views_fast(view_count):
+    """Format view count to readable format"""
+    if not view_count or view_count <= 0:
+        return "0 views"
+    
+    if view_count >= 1_000_000_000:
+        return f"{view_count / 1_000_000_000:.1f}B views"
+    elif view_count >= 1_000_000:
+        return f"{view_count / 1_000_000:.1f}M views"
+    elif view_count >= 1_000:
+        return f"{view_count / 1_000:.1f}K views"
+    else:
+        return f"{view_count:,} views"
+
+def perform_search_sync(query: str) -> List[Dict]:
+    """Perform YouTube search using yt-dlp"""
+    if not query:
+        return []
+    
     try:
-        # Parse exclude_ids
-        excluded = []
-        if exclude_ids:
-            excluded = [vid.strip() for vid in exclude_ids.split(',') if vid.strip()]
+        print(f"Searching for: {query}")
         
-        results = searcher.perform_search(
-            query=query,
-            offset=offset,
-            exclude_ids=excluded,
-            batch_size=batch_size
-        )
+        # Streamlined yt-dlp options for speed
+        search_opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'extract_flat': True,
+            'skip_download': True,
+            'ignoreerrors': True,
+            'geo_bypass': True,
+            'noplaylist': True,
+            'socket_timeout': 8,
+            'retries': 1,
+            'format': 'best',
+        }
+        
+        # Fetch 10 results to filter down to 5 good ones
+        fetch_count = 10
+        with yt_dlp.YoutubeDL(search_opts) as ydl:
+            search_results = ydl.extract_info(
+                f"ytsearch{fetch_count}:{query}",
+                download=False
+            )
+        
+        print(f"yt-dlp response received")
+        
+        if not search_results or 'entries' not in search_results:
+            print("No entries in search results")
+            return []
+        
+        entries = search_results.get('entries', [])
+        filtered = []
+        seen = set()
+        
+        for entry in entries:
+            if not entry or not entry.get('id'):
+                continue
+            
+            vid = entry['id']
+            if vid in seen:
+                continue
+            seen.add(vid)
+            
+            title = entry.get('title', 'No Title')
+            uploader = entry.get('uploader', 'Unknown')
+            duration = entry.get('duration')
+            view_count = entry.get('view_count')
+            
+            # Skip if title and uploader are the same (likely not music)
+            if str(title).strip().lower() == str(uploader).strip().lower():
+                continue
+                
+            # Skip if duration is 0 or invalid
+            if not duration or duration <= 0:
+                continue
+            
+            # Skip very long videos (likely not songs)
+            if duration > 600:  # 10 minutes
+                continue
+            
+            result = {
+                'title': str(title).strip()[:100],
+                'thumbnail_url': f"https://img.youtube.com/vi/{vid}/mqdefault.jpg",
+                'videoId': vid,
+                'uploader': str(uploader).strip()[:50] if uploader else 'Unknown',
+                'duration': format_duration_fast(duration),
+                'view_count': format_views_fast(view_count),
+                'url': f"https://www.youtube.com/watch?v={vid}"
+            }
+            filtered.append(result)
+            
+            # Limit to 5 results
+            if len(filtered) >= 5:
+                break
+        
+        print(f"Processed {len(filtered)} results")
+        return filtered
+        
+    except Exception as e:
+        print(f"yt-dlp search failed: {str(e)}")
+        return []
+
+def get_stream_url_sync(video_id: str) -> Dict:
+    """Get streaming URL for a specific video"""
+    try:
+        # Configure yt-dlp options for audio streaming
+        base_ydl_opts = {
+            'format': 'bestaudio[abr>0]/bestaudio/best',
+            'quiet': True,
+            'no_warnings': True,
+        }
+        
+        youtube_url = f"https://www.youtube.com/watch?v={video_id}"
+        
+        def extract_with_cookies(url: str):
+            # First try without cookies
+            try:
+                with yt_dlp.YoutubeDL(base_ydl_opts) as ydl:
+                    return ydl.extract_info(url, download=False)
+            except Exception as e_first:
+                lower_msg = str(e_first).lower()
+                need_cookies = ('confirm you' in lower_msg and 'bot' in lower_msg) or \
+                             ('sign in to confirm' in lower_msg) or ('429' in lower_msg)
+                if not need_cookies:
+                    raise
+                
+                # Try common browsers for cookies
+                for browser_name in ['edge', 'chrome', 'chromium', 'brave', 'firefox']:
+                    try:
+                        opts = dict(base_ydl_opts)
+                        opts['cookiesfrombrowser'] = (browser_name,)
+                        with yt_dlp.YoutubeDL(opts) as ydl:
+                            return ydl.extract_info(url, download=False)
+                    except Exception:
+                        continue
+                
+                # If all cookie attempts fail, re-raise the original
+                raise e_first
+        
+        info = extract_with_cookies(youtube_url)
         
         return {
-            "results": results,
-            "query": query,
-            "offset": offset,
-            "batch_size": batch_size,
-            "count": len(results)
+            'stream_url': info['url'],
+            'title': info.get('title', 'Unknown Title'),
+            'duration': info.get('duration', 0),
+            'thumbnail_url': f"https://img.youtube.com/vi/{video_id}/mqdefault.jpg"
         }
         
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
+        print(f"Error getting stream URL: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get stream URL: {str(e)}")
 
-@app.get("/stream")
-def stream_music(
-    video_id: str = Query(..., description="YouTube video ID or full URL")
-):
-    """Get streaming URL for a video"""
+# Thread pool for async operations
+executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+
+@app.get("/")
+async def root():
+    return {"message": "Music Streaming API is running!"}
+
+@app.get("/search", response_model=List[SearchResult])
+async def search_music(q: str = Query(..., description="Search query for music")):
+    """Search for music on YouTube"""
+    if not q or len(q.strip()) < 2:
+        raise HTTPException(status_code=400, detail="Query must be at least 2 characters")
+    
     try:
-        stream_info = searcher.get_stream_info(video_id)
+        # Run search in thread pool to avoid blocking
+        loop = asyncio.get_event_loop()
+        results = await loop.run_in_executor(executor, perform_search_sync, q.strip())
         
-        if not stream_info:
-            raise HTTPException(status_code=404, detail="Stream not found or unavailable")
+        if not results:
+            return []
         
-        return stream_info
+        return results
+        
+    except Exception as e:
+        print(f"Search error: {e}")
+        raise HTTPException(status_code=500, detail="Search failed")
+
+@app.get("/stream/{video_id}", response_model=StreamResponse)
+async def get_stream(video_id: str):
+    """Get streaming URL for a specific video"""
+    if not video_id:
+        raise HTTPException(status_code=400, detail="Video ID is required")
+    
+    try:
+        # Run stream extraction in thread pool
+        loop = asyncio.get_event_loop()
+        stream_data = await loop.run_in_executor(executor, get_stream_url_sync, video_id)
+        
+        return stream_data
         
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Stream extraction failed: {str(e)}")
-
-@app.get("/stream/{video_id}")
-def stream_music_path(video_id: str):
-    """Alternative endpoint with video ID in path"""
-    return stream_music(video_id)
+        print(f"Stream error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get stream")
 
 @app.get("/health")
-def health_check():
+async def health_check():
     """Health check endpoint"""
-    return {"status": "healthy", "message": "Music API is running"}
-
-@app.get("/")
-def root():
-    """API information"""
-    return {
-        "name": "YouTube Music Search API",
-        "version": "1.0.0",
-        "endpoints": {
-            "search": "/search?query=song+name&offset=0&batch_size=10",
-            "stream": "/stream?video_id=VIDEO_ID",
-            "stream_alt": "/stream/VIDEO_ID",
-            "health": "/health"
-        },
-        "description": "Fast YouTube music search and streaming API using yt-dlp"
-    }
-
+    return {"status": "healthy", "service": "Music Streaming API"}
 
 if __name__ == "__main__":
-    uvicorn.run("test:app", host="0.0.0.0", port=8000, reload=True)
+    print("Starting Music Streaming API...")
+    print("API will be available at: http://localhost:8000")
+    print("Documentation at: http://localhost:8000/docs")
+    
+    uvicorn.run(
+        "test1:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True,
+        log_level="info"
+    )
