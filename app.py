@@ -11,8 +11,8 @@ import random
 import time
 import requests
 from bs4 import BeautifulSoup
-import re
 import json
+import re
 
 app = FastAPI(title="Music Streaming API", version="1.0.0")
 
@@ -68,6 +68,48 @@ def format_views_fast(view_count):
     else:
         return f"{view_count:,} views"
 
+def get_random_user_agent():
+    """Return a random user agent to avoid detection"""
+    user_agents = [
+        # Windows Chrome
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
+        
+        # Mac Chrome
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+        
+        # Firefox
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:121.0) Gecko/20100101 Firefox/121.0",
+        
+        # Safari
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+        
+        # Mobile
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+        "Mozilla/5.0 (Linux; Android 10; SM-G981B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.162 Mobile Safari/537.36"
+    ]
+    return random.choice(user_agents)
+
+def get_random_headers():
+    """Return random headers to avoid detection"""
+    return {
+        'User-Agent': get_random_user_agent(),
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Accept-Encoding': 'gzip, deflate',
+        'DNT': '1',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        'Sec-Fetch-User': '?1',
+        'Cache-Control': 'max-age=0',
+    }
+
 def perform_search_sync(query: str) -> List[Dict]:
     """Perform YouTube search using direct HTTP requests"""
     if not query:
@@ -77,19 +119,11 @@ def perform_search_sync(query: str) -> List[Dict]:
         print(f"Searching for: {query}")
         
         # Prepare headers to mimic a browser
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
-            'Accept-Encoding': 'gzip, deflate',
-            'DNT': '1',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1',
-        }
+        headers = get_random_headers()
         
         # Search YouTube
         search_url = f"https://www.youtube.com/results?search_query={requests.utils.quote(query)}"
-        response = requests.get(search_url, headers=headers, timeout=10)
+        response = requests.get(search_url, headers=headers, timeout=15)
         
         if response.status_code != 200:
             print(f"Search request failed with status code: {response.status_code}")
@@ -103,80 +137,89 @@ def perform_search_sync(query: str) -> List[Dict]:
         video_data = []
         
         for script in scripts:
-            if 'var ytInitialData' in script.text:
-                # Extract the JSON data
-                json_text = script.text.split('var ytInitialData = ')[1].split(';')[0]
-                data = json.loads(json_text)
-                
-                # Extract video information
-                contents = data.get('contents', {}).get('twoColumnSearchResultsRenderer', {}).get('primaryContents', {}).get('sectionListRenderer', {}).get('contents', [])
-                
-                for content in contents:
-                    item_section = content.get('itemSectionRenderer', {})
-                    for item in item_section.get('contents', []):
-                        if 'videoRenderer' in item:
-                            video = item['videoRenderer']
-                            video_id = video.get('videoId')
-                            title = video.get('title', {}).get('runs', [{}])[0].get('text', 'No Title')
-                            uploader = video.get('ownerText', {}).get('runs', [{}])[0].get('text', 'Unknown')
-                            view_count = video.get('viewCountText', {}).get('simpleText', '0')
-                            duration = video.get('lengthText', {}).get('simpleText', '0:00')
-                            thumbnail = video.get('thumbnail', {}).get('thumbnails', [{}])[0].get('url', f'https://img.youtube.com/vi/{video_id}/mqdefault.jpg')
-                            
-                            # Convert duration to seconds
-                            duration_parts = duration.split(':')
-                            if len(duration_parts) == 2:
-                                duration_seconds = int(duration_parts[0]) * 60 + int(duration_parts[1])
-                            elif len(duration_parts) == 3:
-                                duration_seconds = int(duration_parts[0]) * 3600 + int(duration_parts[1]) * 60 + int(duration_parts[2])
-                            else:
-                                duration_seconds = 0
-                            
-                            # Convert view count to number
-                            view_count_num = 0
-                            view_count_text = view_count.lower()
-                            try:
-                                if 'b' in view_count_text:
-                                    view_count_num = int(float(view_count_text.replace('b', '').replace(',', '')) * 1_000_000_000)
-                                elif 'm' in view_count_text:
-                                    view_count_num = int(float(view_count_text.replace('m', '').replace(',', '')) * 1_000_000)
-                                elif 'k' in view_count_text:
-                                    view_count_num = int(float(view_count_text.replace('k', '').replace(',', '')) * 1_000)
-                                else:
-                                    view_count_num = int(view_count_text.replace(',', '').replace(' views', '').replace(' view', ''))
-                            except:
-                                view_count_num = 0
-                            
-                            # Skip if title and uploader are the same (likely not music)
-                            if str(title).strip().lower() == str(uploader).strip().lower():
-                                continue
+            script_text = script.text
+            if 'var ytInitialData' in script_text:
+                try:
+                    # Extract the JSON data
+                    json_text = script_text.split('var ytInitialData = ')[1].split(';')[0]
+                    data = json.loads(json_text)
+                    
+                    # Extract video information
+                    contents = data.get('contents', {}).get('twoColumnSearchResultsRenderer', {}).get('primaryContents', {}).get('sectionListRenderer', {}).get('contents', [])
+                    
+                    for content in contents:
+                        item_section = content.get('itemSectionRenderer', {})
+                        for item in item_section.get('contents', []):
+                            if 'videoRenderer' in item:
+                                video = item['videoRenderer']
+                                video_id = video.get('videoId')
+                                if not video_id:
+                                    continue
+                                    
+                                title = video.get('title', {}).get('runs', [{}])[0].get('text', 'No Title')
+                                uploader = video.get('ownerText', {}).get('runs', [{}])[0].get('text', 'Unknown')
+                                view_count = video.get('viewCountText', {}).get('simpleText', '0')
+                                duration = video.get('lengthText', {}).get('simpleText', '0:00')
+                                thumbnails = video.get('thumbnail', {}).get('thumbnails', [])
+                                thumbnail = thumbnails[0].get('url', f'https://img.youtube.com/vi/{video_id}/mqdefault.jpg') if thumbnails else f'https://img.youtube.com/vi/{video_id}/mqdefault.jpg'
                                 
-                            # Skip if duration is 0 or invalid
-                            if not duration_seconds or duration_seconds <= 0:
-                                continue
-                            
-                            # Skip very long videos (likely not songs)
-                            if duration_seconds > 600:  # 10 minutes
-                                continue
-                            
-                            result = {
-                                'title': str(title).strip()[:100],
-                                'thumbnail_url': thumbnail,
-                                'videoId': video_id,
-                                'uploader': str(uploader).strip()[:50] if uploader else 'Unknown',
-                                'duration': duration,
-                                'view_count': format_views_fast(view_count_num),
-                                'url': f"https://www.youtube.com/watch?v={video_id}"
-                            }
-                            video_data.append(result)
-                            
-                            # Limit to 5 results
-                            if len(video_data) >= 5:
-                                break
+                                # Convert duration to seconds
+                                duration_parts = duration.split(':')
+                                if len(duration_parts) == 2:
+                                    duration_seconds = int(duration_parts[0]) * 60 + int(duration_parts[1])
+                                elif len(duration_parts) == 3:
+                                    duration_seconds = int(duration_parts[0]) * 3600 + int(duration_parts[1]) * 60 + int(duration_parts[2])
+                                else:
+                                    duration_seconds = 0
+                                
+                                # Convert view count to number
+                                view_count_num = 0
+                                view_count_text = view_count.lower()
+                                try:
+                                    if 'b' in view_count_text:
+                                        view_count_num = int(float(view_count_text.replace('b', '').replace(',', '')) * 1_000_000_000)
+                                    elif 'm' in view_count_text:
+                                        view_count_num = int(float(view_count_text.replace('m', '').replace(',', '')) * 1_000_000)
+                                    elif 'k' in view_count_text:
+                                        view_count_num = int(float(view_count_text.replace('k', '').replace(',', '')) * 1_000)
+                                    else:
+                                        view_count_num = int(view_count_text.replace(',', '').replace(' views', '').replace(' view', ''))
+                                except:
+                                    view_count_num = 0
+                                
+                                # Skip if title and uploader are the same (likely not music)
+                                if str(title).strip().lower() == str(uploader).strip().lower():
+                                    continue
+                                    
+                                # Skip if duration is 0 or invalid
+                                if not duration_seconds or duration_seconds <= 0:
+                                    continue
+                                
+                                # Skip very long videos (likely not songs)
+                                if duration_seconds > 600:  # 10 minutes
+                                    continue
+                                
+                                result = {
+                                    'title': str(title).strip()[:100],
+                                    'thumbnail_url': thumbnail,
+                                    'videoId': video_id,
+                                    'uploader': str(uploader).strip()[:50] if uploader else 'Unknown',
+                                    'duration': duration,
+                                    'view_count': format_views_fast(view_count_num),
+                                    'url': f"https://www.youtube.com/watch?v={video_id}"
+                                }
+                                video_data.append(result)
+                                
+                                # Limit to 5 results
+                                if len(video_data) >= 5:
+                                    break
+                        if len(video_data) >= 5:
+                            break
                     if len(video_data) >= 5:
                         break
-                if len(video_data) >= 5:
-                    break
+                except Exception as e:
+                    print(f"Error parsing JSON data: {e}")
+                    continue
         
         print(f"Processed {len(video_data)} results")
         return video_data
@@ -203,16 +246,7 @@ def perform_search_fallback(query: str) -> List[Dict]:
             'socket_timeout': 8,
             'retries': 1,
             'format': 'best',
-            'http_headers': {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                'Accept-Language': 'en-us,en;q=0.5',
-                'Sec-Fetch-Mode': 'navigate',
-                'Accept-Encoding': 'gzip, deflate',
-                'DNT': '1',
-                'Connection': 'keep-alive',
-                'Upgrade-Insecure-Requests': '1',
-            }
+            'http_headers': get_random_headers()
         }
         
         # Fetch 10 results to filter down to 5 good ones
@@ -286,15 +320,6 @@ def get_stream_url_sync(video_id: str) -> Dict:
     try:
         youtube_url = f"https://www.youtube.com/watch?v={video_id}"
         
-        # List of different user agents to rotate through
-        user_agents = [
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15',
-            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        ]
-        
         # Different extraction strategies
         strategies = [
             # Strategy 1: Basic with random user agent
@@ -305,15 +330,7 @@ def get_stream_url_sync(video_id: str) -> Dict:
                 'extractor_retries': 3,
                 'fragment_retries': 3,
                 'socket_timeout': 30,
-                'http_headers': {
-                    'User-Agent': random.choice(user_agents),
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                    'Accept-Language': 'en-us,en;q=0.5',
-                    'Accept-Encoding': 'gzip, deflate',
-                    'DNT': '1',
-                    'Connection': 'keep-alive',
-                    'Upgrade-Insecure-Requests': '1',
-                }
+                'http_headers': get_random_headers()
             },
             
             # Strategy 2: Mobile user agent
@@ -336,19 +353,14 @@ def get_stream_url_sync(video_id: str) -> Dict:
                 'no_warnings': True,
                 'geo_bypass': True,
                 'geo_bypass_country': 'US',
-                'http_headers': {
-                    'User-Agent': random.choice(user_agents),
-                    'Referer': 'https://www.youtube.com/',
-                }
+                'http_headers': get_random_headers()
             },
             
             # Strategy 4: Minimalist approach
             {
                 'format': 'bestaudio/best',
                 'quiet': True,
-                'http_headers': {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                }
+                'http_headers': get_random_headers()
             }
         ]
         
@@ -360,7 +372,7 @@ def get_stream_url_sync(video_id: str) -> Dict:
                 
                 # Add small random delay to avoid rate limiting
                 if i > 0:
-                    time.sleep(random.uniform(0.5, 2.0))
+                    time.sleep(random.uniform(1, 3))
                 
                 with yt_dlp.YoutubeDL(opts) as ydl:
                     info = ydl.extract_info(youtube_url, download=False)
@@ -386,6 +398,32 @@ def get_stream_url_sync(video_id: str) -> Dict:
                     
                 # If it's a different error, continue but note it
                 continue
+        
+        # If all strategies failed, try one more approach with cookies
+        try:
+            print("Trying final approach with cookie consent bypass")
+            final_opts = {
+                'format': 'bestaudio[abr>0]/bestaudio/best',
+                'quiet': True,
+                'no_warnings': True,
+                'http_headers': get_random_headers(),
+                'cookiefile': None,  # Try without cookies first
+                'ignoreerrors': True,
+            }
+            
+            with yt_dlp.YoutubeDL(final_opts) as ydl:
+                info = ydl.extract_info(youtube_url, download=False)
+                
+                if info and info.get('url'):
+                    print("Successfully extracted with final approach")
+                    return {
+                        'stream_url': info['url'],
+                        'title': info.get('title', 'Unknown Title'),
+                        'duration': info.get('duration', 0),
+                        'thumbnail_url': f"https://img.youtube.com/vi/{video_id}/mqdefault.jpg"
+                    }
+        except Exception as e:
+            print(f"Final approach also failed: {str(e)}")
         
         # If all strategies failed, raise the last error
         if last_error:
@@ -445,12 +483,12 @@ async def get_stream(video_id: str):
     if not video_id:
         raise HTTPException(status_code=400, detail="Video ID is required")
     
-    max_retries = 2
+    max_retries = 3
     for attempt in range(max_retries):
         try:
             # Add random delay between attempts to avoid rate limiting
             if attempt > 0:
-                await asyncio.sleep(random.uniform(1, 3))
+                await asyncio.sleep(random.uniform(2, 5))
             
             # Run stream extraction in thread pool
             loop = asyncio.get_event_loop()
