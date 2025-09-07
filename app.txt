@@ -9,10 +9,6 @@ import concurrent.futures
 from pydantic import BaseModel
 import random
 import time
-import requests
-from bs4 import BeautifulSoup
-import re
-import json
 
 app = FastAPI(title="Music Streaming API", version="1.0.0")
 
@@ -69,127 +65,12 @@ def format_views_fast(view_count):
         return f"{view_count:,} views"
 
 def perform_search_sync(query: str) -> List[Dict]:
-    """Perform YouTube search using direct HTTP requests"""
+    """Perform YouTube search using yt-dlp"""
     if not query:
         return []
     
     try:
         print(f"Searching for: {query}")
-        
-        # Prepare headers to mimic a browser
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
-            'Accept-Encoding': 'gzip, deflate',
-            'DNT': '1',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1',
-        }
-        
-        # Search YouTube
-        search_url = f"https://www.youtube.com/results?search_query={requests.utils.quote(query)}"
-        response = requests.get(search_url, headers=headers, timeout=10)
-        
-        if response.status_code != 200:
-            print(f"Search request failed with status code: {response.status_code}")
-            return []
-        
-        # Parse the HTML response
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # Find script tags containing video data
-        scripts = soup.find_all('script')
-        video_data = []
-        
-        for script in scripts:
-            if 'var ytInitialData' in script.text:
-                # Extract the JSON data
-                json_text = script.text.split('var ytInitialData = ')[1].split(';')[0]
-                data = json.loads(json_text)
-                
-                # Extract video information
-                contents = data.get('contents', {}).get('twoColumnSearchResultsRenderer', {}).get('primaryContents', {}).get('sectionListRenderer', {}).get('contents', [])
-                
-                for content in contents:
-                    item_section = content.get('itemSectionRenderer', {})
-                    for item in item_section.get('contents', []):
-                        if 'videoRenderer' in item:
-                            video = item['videoRenderer']
-                            video_id = video.get('videoId')
-                            title = video.get('title', {}).get('runs', [{}])[0].get('text', 'No Title')
-                            uploader = video.get('ownerText', {}).get('runs', [{}])[0].get('text', 'Unknown')
-                            view_count = video.get('viewCountText', {}).get('simpleText', '0')
-                            duration = video.get('lengthText', {}).get('simpleText', '0:00')
-                            thumbnail = video.get('thumbnail', {}).get('thumbnails', [{}])[0].get('url', f'https://img.youtube.com/vi/{video_id}/mqdefault.jpg')
-                            
-                            # Convert duration to seconds
-                            duration_parts = duration.split(':')
-                            if len(duration_parts) == 2:
-                                duration_seconds = int(duration_parts[0]) * 60 + int(duration_parts[1])
-                            elif len(duration_parts) == 3:
-                                duration_seconds = int(duration_parts[0]) * 3600 + int(duration_parts[1]) * 60 + int(duration_parts[2])
-                            else:
-                                duration_seconds = 0
-                            
-                            # Convert view count to number
-                            view_count_num = 0
-                            view_count_text = view_count.lower()
-                            try:
-                                if 'b' in view_count_text:
-                                    view_count_num = int(float(view_count_text.replace('b', '').replace(',', '')) * 1_000_000_000)
-                                elif 'm' in view_count_text:
-                                    view_count_num = int(float(view_count_text.replace('m', '').replace(',', '')) * 1_000_000)
-                                elif 'k' in view_count_text:
-                                    view_count_num = int(float(view_count_text.replace('k', '').replace(',', '')) * 1_000)
-                                else:
-                                    view_count_num = int(view_count_text.replace(',', '').replace(' views', '').replace(' view', ''))
-                            except:
-                                view_count_num = 0
-                            
-                            # Skip if title and uploader are the same (likely not music)
-                            if str(title).strip().lower() == str(uploader).strip().lower():
-                                continue
-                                
-                            # Skip if duration is 0 or invalid
-                            if not duration_seconds or duration_seconds <= 0:
-                                continue
-                            
-                            # Skip very long videos (likely not songs)
-                            if duration_seconds > 600:  # 10 minutes
-                                continue
-                            
-                            result = {
-                                'title': str(title).strip()[:100],
-                                'thumbnail_url': thumbnail,
-                                'videoId': video_id,
-                                'uploader': str(uploader).strip()[:50] if uploader else 'Unknown',
-                                'duration': duration,
-                                'view_count': format_views_fast(view_count_num),
-                                'url': f"https://www.youtube.com/watch?v={video_id}"
-                            }
-                            video_data.append(result)
-                            
-                            # Limit to 5 results
-                            if len(video_data) >= 5:
-                                break
-                    if len(video_data) >= 5:
-                        break
-                if len(video_data) >= 5:
-                    break
-        
-        print(f"Processed {len(video_data)} results")
-        return video_data
-        
-    except Exception as e:
-        print(f"Search failed: {str(e)}")
-        # Fallback to yt-dlp if direct search fails
-        return perform_search_fallback(query)
-
-def perform_search_fallback(query: str) -> List[Dict]:
-    """Fallback search using yt-dlp if direct search fails"""
-    try:
-        print("Using fallback search method")
         
         # Streamlined yt-dlp options for speed
         search_opts = {
@@ -203,6 +84,7 @@ def perform_search_fallback(query: str) -> List[Dict]:
             'socket_timeout': 8,
             'retries': 1,
             'format': 'best',
+            # Add anti-detection headers
             'http_headers': {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -223,10 +105,10 @@ def perform_search_fallback(query: str) -> List[Dict]:
                 download=False
             )
         
-        print(f"yt-dlp fallback response received")
+        print(f"yt-dlp response received")
         
         if not search_results or 'entries' not in search_results:
-            print("No entries in fallback search results")
+            print("No entries in search results")
             return []
         
         entries = search_results.get('entries', [])
@@ -274,11 +156,11 @@ def perform_search_fallback(query: str) -> List[Dict]:
             if len(filtered) >= 5:
                 break
         
-        print(f"Fallback processed {len(filtered)} results")
+        print(f"Processed {len(filtered)} results")
         return filtered
         
     except Exception as e:
-        print(f"Fallback search also failed: {str(e)}")
+        print(f"yt-dlp search failed: {str(e)}")
         return []
 
 def get_stream_url_sync(video_id: str) -> Dict:
