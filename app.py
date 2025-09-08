@@ -43,6 +43,7 @@ class VideoStreamResponse(BaseModel):
     duration: int
     thumbnail_url: str
     quality: str
+    stream_type: str
 
 def format_duration_fast(seconds):
     """Format duration from seconds to MM:SS or HH:MM:SS"""
@@ -223,23 +224,33 @@ def get_stream_url_sync(video_id: str) -> Dict:
             raise HTTPException(status_code=500, detail=f"Failed to get audio stream URL: {error_msg}")
 
 def get_video_stream_url_sync(video_id: str) -> Dict:
-    """Get streaming URL for video with audio in highest quality"""
+    """Get streaming URL for video - prioritize highest quality even if separate streams"""
     try:
         youtube_url = f"https://www.youtube.com/watch?v={video_id}"
         
-        # First try to get combined video+audio streams (with sound)
-        combined_opts = {
+        # Modified format selection to prioritize QUALITY over combined streams
+        opts = {
             'format': (
-                'best[height>=1080][ext=mp4][acodec!=none][vcodec!=none]/'  # 1080p+ with audio
-                'best[height>=720][ext=mp4][acodec!=none][vcodec!=none]/'   # 720p+ with audio
-                'best[ext=mp4][acodec!=none][vcodec!=none]/'                # Any MP4 with audio
-                'best[acodec!=none][vcodec!=none]'                          # Any format with both audio+video
+                # First try highest quality separate streams (usually gives best results)
+                'bestvideo[height>=2160][ext=mp4]+bestaudio[ext=m4a]/'  # 4K + best audio
+                'bestvideo[height>=1440][ext=mp4]+bestaudio[ext=m4a]/'  # 1440p + best audio  
+                'bestvideo[height>=1080][ext=mp4]+bestaudio[ext=m4a]/'  # 1080p + best audio
+                'bestvideo[height>=720][ext=mp4]+bestaudio[ext=m4a]/'   # 720p + best audio
+                'bestvideo[ext=mp4]+bestaudio[ext=m4a]/'                # Best video + best audio (mp4)
+                'bestvideo+bestaudio[ext=m4a]/'                         # Best video + best audio
+                'bestvideo+bestaudio/'                                   # Best video + best audio (any format)
+                # Only fall back to combined if separate not available
+                'best[ext=mp4][height>=1080]/'                          # Combined 1080p+ mp4
+                'best[ext=mp4][height>=720]/'                           # Combined 720p+ mp4
+                'best[ext=mp4]/'                                        # Any combined mp4
+                'best[height>=720]/'                                    # Combined 720p+ any format
+                'best/'                                                 # Best available combined
             ),
             'quiet': True,
             'no_warnings': True,
             'extractor_retries': 2,
             'fragment_retries': 2,
-            'socket_timeout': 25,
+            'socket_timeout': 30,
             'http_headers': {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -251,112 +262,56 @@ def get_video_stream_url_sync(video_id: str) -> Dict:
             }
         }
         
-        print(f"Extracting video+audio stream for {video_id}")
+        print(f"Extracting highest quality video stream for {video_id}")
         
-        # Try combined format first
-        try:
-            with yt_dlp.YoutubeDL(combined_opts) as ydl:
-                info = ydl.extract_info(youtube_url, download=False)
-                
-                if info and info.get('url'):
-                    # Check if this format has both video and audio
-                    has_video = info.get('vcodec') and info.get('vcodec') != 'none'
-                    has_audio = info.get('acodec') and info.get('acodec') != 'none'
-                    
-                    if has_video and has_audio:
-                        quality = "Unknown"
-                        if info.get('height'):
-                            quality = f"{info['height']}p"
-                        elif info.get('format_note'):
-                            quality = info['format_note']
-                        
-                        print(f"Found combined video+audio stream: {quality}")
-                        return {
-                            'video_url': info['url'],
-                            'title': info.get('title', 'Unknown Title'),
-                            'duration': info.get('duration', 0),
-                            'thumbnail_url': f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg",
-                            'quality': f"{quality} (with audio)"
-                        }
-        except Exception as e:
-            print(f"Combined format failed, trying separate streams: {e}")
-        
-        # If combined doesn't work, try separate video+audio streams
-        separate_opts = {
-            'format': (
-                'bestvideo[height>=1080][ext=mp4]+bestaudio[ext=m4a]/'  # 1080p+ MP4 + M4A
-                'bestvideo[height>=720][ext=mp4]+bestaudio[ext=m4a]/'   # 720p+ MP4 + M4A  
-                'bestvideo[ext=mp4]+bestaudio[ext=m4a]/'                # Any MP4 + M4A
-                'bestvideo+bestaudio'                                   # Best video + best audio
-            ),
-            'quiet': True,
-            'no_warnings': True,
-            'extractor_retries': 2,
-            'fragment_retries': 2,
-            'socket_timeout': 30,
-            'http_headers': combined_opts['http_headers']
-        }
-        
-        print(f"Trying separate video+audio streams for {video_id}")
-        
-        with yt_dlp.YoutubeDL(separate_opts) as ydl:
+        with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(youtube_url, download=False)
             
             if info:
-                # Handle separate streams (requested_formats)
+                # Check if we have separate streams (PREFERRED for quality) - NEW PRIORITY
                 if 'requested_formats' in info and info['requested_formats']:
                     video_url = None
                     audio_url = None
                     quality = "Unknown"
+                    video_format = None
+                    audio_format = None
                     
                     for fmt in info['requested_formats']:
                         if fmt.get('vcodec') != 'none' and fmt.get('acodec') == 'none':
-                            # Video-only stream
                             video_url = fmt.get('url')
+                            video_format = fmt
                             if fmt.get('height'):
                                 quality = f"{fmt['height']}p"
+                            elif fmt.get('format_note'):
+                                quality = fmt['format_note']
                         elif fmt.get('acodec') != 'none' and fmt.get('vcodec') == 'none':
-                            # Audio-only stream
                             audio_url = fmt.get('url')
+                            audio_format = fmt
                     
                     if video_url and audio_url:
-                        print(f"Found separate streams: {quality} video + audio")
+                        # Get additional quality info
+                        fps = video_format.get('fps', 30) if video_format else 30
+                        vbr = video_format.get('vbr', 0) if video_format else 0
+                        abr = audio_format.get('abr', 0) if audio_format else 0
+                        
+                        quality_detail = quality
+                        if fps and fps > 30:
+                            quality_detail += f"{fps}fps"
+                        if vbr > 0:
+                            quality_detail += f" ({vbr}kbps)"
+                            
+                        print(f"Found separate high-quality streams - Video: {quality_detail}, Audio: {abr}kbps")
                         return {
                             'video_url': video_url,
                             'audio_url': audio_url,
                             'title': info.get('title', 'Unknown Title'),
                             'duration': info.get('duration', 0),
                             'thumbnail_url': f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg",
-                            'quality': f"{quality} (separate streams)"
+                            'quality': quality_detail,
+                            'stream_type': 'separate'
                         }
-                    elif video_url:
-                        # Video found but no audio - try to find audio manually
-                        print(f"Video found but no audio URL, searching manually...")
-                        formats = info.get('formats', [])
-                        best_audio_url = None
-                        best_abr = 0
-                        
-                        for fmt in formats:
-                            if (fmt.get('acodec') != 'none' and 
-                                fmt.get('vcodec') == 'none' and 
-                                fmt.get('url')):
-                                abr = fmt.get('abr', 0) or 0
-                                if abr > best_abr:
-                                    best_abr = abr
-                                    best_audio_url = fmt.get('url')
-                        
-                        if best_audio_url:
-                            print(f"Found audio manually: {best_abr}kbps")
-                            return {
-                                'video_url': video_url,
-                                'audio_url': best_audio_url,
-                                'title': info.get('title', 'Unknown Title'),
-                                'duration': info.get('duration', 0),
-                                'thumbnail_url': f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg",
-                                'quality': f"{quality} (manual audio)"
-                            }
                 
-                # Single URL fallback (should have been caught earlier, but just in case)
+                # Check if we have a single URL (combined video+audio) - FALLBACK ONLY
                 if info.get('url'):
                     quality = "Unknown"
                     if info.get('height'):
@@ -364,22 +319,127 @@ def get_video_stream_url_sync(video_id: str) -> Dict:
                     elif info.get('format_note'):
                         quality = info['format_note']
                     
-                    print(f"Fallback single stream: {quality}")
-                    return {
-                        'video_url': info['url'],
-                        'title': info.get('title', 'Unknown Title'),
-                        'duration': info.get('duration', 0),
-                        'thumbnail_url': f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg",
-                        'quality': f"{quality} (fallback)"
-                    }
+                    # Check if this stream has both video and audio
+                    has_video = info.get('vcodec') and info.get('vcodec') != 'none'
+                    has_audio = info.get('acodec') and info.get('acodec') != 'none'
+                    
+                    if has_video and has_audio:
+                        fps = info.get('fps', 30)
+                        vbr = info.get('vbr', 0)
+                        
+                        quality_detail = quality
+                        if fps and fps > 30:
+                            quality_detail += f"{fps}fps"
+                        if vbr > 0:
+                            quality_detail += f" ({vbr}kbps)"
+                            
+                        print(f"Found combined stream - Quality: {quality_detail}")
+                        return {
+                            'video_url': info['url'],
+                            'title': info.get('title', 'Unknown Title'),
+                            'duration': info.get('duration', 0),
+                            'thumbnail_url': f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg",
+                            'quality': quality_detail,
+                            'stream_type': 'combined'
+                        }
+                
+                # Manual format selection for maximum quality (enhanced)
+                formats = info.get('formats', [])
+                if formats:
+                    # Prioritize separate streams for maximum quality
+                    best_video = None
+                    best_audio = None
+                    best_height = 0
+                    best_audio_quality = 0
+                    
+                    # Find best video stream
+                    for fmt in formats:
+                        if fmt.get('vcodec') != 'none' and fmt.get('acodec') == 'none':
+                            height = fmt.get('height', 0) or 0
+                            fps = fmt.get('fps', 30) or 30
+                            vbr = fmt.get('vbr', 0) or 0
+                            
+                            # Score based on height, fps, and bitrate
+                            score = height * 100 + fps + (vbr / 1000)
+                            best_score = best_height * 100 + 30 + 0  # Current best score
+                            
+                            if score > best_score and fmt.get('url'):
+                                best_height = height
+                                best_video = fmt
+                    
+                    # Find best audio stream  
+                    for fmt in formats:
+                        if fmt.get('acodec') != 'none' and fmt.get('vcodec') == 'none':
+                            abr = fmt.get('abr', 0) or 0
+                            # Prefer higher bitrate audio
+                            if abr > best_audio_quality and fmt.get('url'):
+                                best_audio_quality = abr
+                                best_audio = fmt
+                    
+                    if best_video and best_audio:
+                        fps = best_video.get('fps', 30)
+                        vbr = best_video.get('vbr', 0)
+                        
+                        quality = f"{best_height}p" if best_height > 0 else "Unknown"
+                        if fps and fps > 30:
+                            quality += f"{fps}fps"
+                        if vbr > 0:
+                            quality += f" ({vbr}kbps)"
+                            
+                        print(f"Manual selection - Video: {quality}, Audio: {best_audio_quality}kbps")
+                        return {
+                            'video_url': best_video['url'],
+                            'audio_url': best_audio['url'],
+                            'title': info.get('title', 'Unknown Title'),
+                            'duration': info.get('duration', 0),
+                            'thumbnail_url': f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg",
+                            'quality': quality,
+                            'stream_type': 'separate'
+                        }
+                    
+                    # Final fallback: look for any combined streams and pick the best
+                    combined_formats = []
+                    for fmt in formats:
+                        has_video = fmt.get('vcodec') and fmt.get('vcodec') != 'none'
+                        has_audio = fmt.get('acodec') and fmt.get('acodec') != 'none'
+                        height = fmt.get('height', 0) or 0
+                        
+                        if has_video and has_audio and fmt.get('url') and height > 0:
+                            combined_formats.append(fmt)
+                    
+                    if combined_formats:
+                        # Sort by height and fps for best quality
+                        combined_formats.sort(
+                            key=lambda x: (x.get('height', 0) or 0, x.get('fps', 30) or 30, x.get('vbr', 0) or 0), 
+                            reverse=True
+                        )
+                        best_combined = combined_formats[0]
+                        
+                        fps = best_combined.get('fps', 30)
+                        vbr = best_combined.get('vbr', 0)
+                        quality = f"{best_combined.get('height', 0)}p"
+                        
+                        if fps and fps > 30:
+                            quality += f"{fps}fps"
+                        if vbr > 0:
+                            quality += f" ({vbr}kbps)"
+                            
+                        print(f"Final fallback combined format - Quality: {quality}")
+                        return {
+                            'video_url': best_combined['url'],
+                            'title': info.get('title', 'Unknown Title'),
+                            'duration': info.get('duration', 0),
+                            'thumbnail_url': f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg",
+                            'quality': quality,
+                            'stream_type': 'combined'
+                        }
         
-        raise Exception("No video stream with audio found")
+        raise Exception("No suitable video stream found")
         
     except Exception as e:
         error_msg = str(e)
         print(f"Error getting video stream URL: {error_msg}")
         
-        # Provide more specific error messages
         if 'bot' in error_msg.lower() or 'sign in' in error_msg.lower():
             raise HTTPException(
                 status_code=503, 
