@@ -223,18 +223,26 @@ def get_stream_url_sync(video_id: str) -> Dict:
             raise HTTPException(status_code=500, detail=f"Failed to get audio stream URL: {error_msg}")
 
 def get_video_stream_url_sync(video_id: str) -> Dict:
-    """Get streaming URL for video with audio"""
+    """Get streaming URL for video with audio in highest quality"""
     try:
         youtube_url = f"https://www.youtube.com/watch?v={video_id}"
         
-        # Video extraction strategy
+        # Video extraction strategy - prioritize highest quality
         opts = {
-            'format': 'best[height<=720]/best',  # Prioritize 720p or lower for faster loading
+            # Advanced format selection for maximum quality
+            'format': (
+                'bestvideo[height>=2160][ext=mp4]+bestaudio[ext=m4a]/'  # 4K + audio
+                'bestvideo[height>=1080][ext=mp4]+bestaudio[ext=m4a]/'  # 1080p + audio
+                'bestvideo[height>=720][ext=mp4]+bestaudio[ext=m4a]/'   # 720p + audio
+                'best[ext=mp4]/'  # Best single file mp4
+                'bestvideo+bestaudio/'  # Best video + best audio (any format)
+                'best'  # Fallback to best available
+            ),
             'quiet': True,
             'no_warnings': True,
-            'extractor_retries': 1,
-            'fragment_retries': 1,
-            'socket_timeout': 20,
+            'extractor_retries': 2,  # Increased retries for high quality extraction
+            'fragment_retries': 2,
+            'socket_timeout': 30,  # Increased timeout for larger files
             'http_headers': {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -246,37 +254,98 @@ def get_video_stream_url_sync(video_id: str) -> Dict:
             }
         }
         
-        print(f"Extracting video stream for {video_id}")
+        print(f"Extracting highest quality video stream for {video_id}")
         
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(youtube_url, download=False)
             
-            if info and info.get('url'):
-                print(f"Successfully extracted video stream")
+            if info:
+                # Check if we have a single URL (combined video+audio) or separate streams
+                if info.get('url'):
+                    # Single combined stream
+                    quality = "Unknown"
+                    if info.get('height'):
+                        quality = f"{info['height']}p"
+                    elif info.get('format_note'):
+                        quality = info['format_note']
+                    
+                    print(f"Video quality: {quality}")
+                    return {
+                        'video_url': info['url'],
+                        'title': info.get('title', 'Unknown Title'),
+                        'duration': info.get('duration', 0),
+                        'thumbnail_url': f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg",  # Higher quality thumbnail
+                        'quality': quality
+                    }
                 
-                # Get quality info
-                quality = "Unknown"
-                if info.get('height'):
-                    quality = f"{info['height']}p"
-                elif info.get('format_note'):
-                    quality = info['format_note']
+                # Check for separate video and audio streams
+                elif 'requested_formats' in info and info['requested_formats']:
+                    video_url = None
+                    audio_url = None
+                    quality = "Unknown"
+                    
+                    for fmt in info['requested_formats']:
+                        if fmt.get('vcodec') != 'none' and fmt.get('acodec') == 'none':
+                            # Video stream
+                            video_url = fmt.get('url')
+                            if fmt.get('height'):
+                                quality = f"{fmt['height']}p"
+                        elif fmt.get('acodec') != 'none' and fmt.get('vcodec') == 'none':
+                            # Audio stream
+                            audio_url = fmt.get('url')
+                    
+                    if video_url:
+                        result = {
+                            'video_url': video_url,
+                            'title': info.get('title', 'Unknown Title'),
+                            'duration': info.get('duration', 0),
+                            'thumbnail_url': f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg",
+                            'quality': quality
+                        }
+                        if audio_url:
+                            result['audio_url'] = audio_url
+                        
+                        print(f"Video quality: {quality} (separate streams)")
+                        return result
                 
-                result = {
-                    'video_url': info['url'],
-                    'title': info.get('title', 'Unknown Title'),
-                    'duration': info.get('duration', 0),
-                    'thumbnail_url': f"https://img.youtube.com/vi/{video_id}/mqdefault.jpg",
-                    'quality': quality
-                }
-                
-                # Try to get separate audio URL if available
+                # Fallback: try to extract from formats list
                 formats = info.get('formats', [])
-                for fmt in formats:
-                    if fmt.get('acodec') != 'none' and fmt.get('vcodec') == 'none':
-                        result['audio_url'] = fmt.get('url')
-                        break
-                
-                return result
+                if formats:
+                    # Find the best video format
+                    best_video = None
+                    best_audio = None
+                    best_height = 0
+                    best_audio_quality = 0
+                    
+                    for fmt in formats:
+                        # Check for video formats
+                        if fmt.get('vcodec') != 'none' and fmt.get('acodec') == 'none':
+                            height = fmt.get('height', 0) or 0
+                            if height > best_height and fmt.get('url'):
+                                best_height = height
+                                best_video = fmt
+                        
+                        # Check for audio formats
+                        elif fmt.get('acodec') != 'none' and fmt.get('vcodec') == 'none':
+                            abr = fmt.get('abr', 0) or 0
+                            if abr > best_audio_quality and fmt.get('url'):
+                                best_audio_quality = abr
+                                best_audio = fmt
+                    
+                    if best_video:
+                        quality = f"{best_height}p" if best_height > 0 else "Unknown"
+                        result = {
+                            'video_url': best_video['url'],
+                            'title': info.get('title', 'Unknown Title'),
+                            'duration': info.get('duration', 0),
+                            'thumbnail_url': f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg",
+                            'quality': quality
+                        }
+                        if best_audio:
+                            result['audio_url'] = best_audio['url']
+                        
+                        print(f"Video quality: {quality} (manual format selection)")
+                        return result
         
         raise Exception("No video stream found")
         
@@ -381,7 +450,7 @@ if __name__ == "__main__":
     print("Endpoints:")
     print("  - /search?q=query&limit=10 (limit is optional, unlimited by default)")
     print("  - /stream/VIDEO_ID (audio only, fast)")
-    print("  - /streamvideo/VIDEO_ID (video with audio)")
+    print("  - /streamvideo/VIDEO_ID (video with audio, HIGHEST QUALITY)")
     
     uvicorn.run(
         "app:app",
@@ -395,7 +464,7 @@ if __name__ == "__main__":
 ## Search unlimited: /search?q=aespa
 ## Search limited: /search?q=aespa&limit=10
 ## Audio stream: /stream/5oQVTnq-UKk
-## Video stream: /streamvideo/5oQVTnq-UKk
+## High Quality Video stream: /streamvideo/5oQVTnq-UKk
 
 ## To start with ngrok:
 ## ngrok http --domain=instinctually-monosodium-shawnda.ngrok-free.app 8000
