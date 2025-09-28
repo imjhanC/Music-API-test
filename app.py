@@ -426,12 +426,20 @@ def get_video_stream_url_sync(video_id: str) -> Dict:
                             audio_format = fmt
                     
                     if video_url and audio_url:
-                        fps = video_format.get('fps', 30) if video_format else 30
-                        vbr = video_format.get('vbr', 0) if video_format else 0
-                        abr = audio_format.get('abr', 0) if audio_format else 0
+                        # FIXED: Safe handling of None values
+                        fps = video_format.get('fps') if video_format else None
+                        vbr = video_format.get('vbr') if video_format else None
+                        abr = audio_format.get('abr') if audio_format else None
+                        
+                        # Safe FPS handling
+                        fps = fps if fps is not None and fps > 0 else 30
+                        
+                        # Safe bitrate handling
+                        vbr = vbr if vbr is not None and vbr > 0 else 0
+                        abr = abr if abr is not None and abr > 0 else 0
                         
                         quality_detail = quality
-                        if fps and fps > 30:
+                        if fps > 30:
                             quality_detail += f"{fps}fps"
                         if vbr > 0:
                             quality_detail += f" ({vbr}kbps)"
@@ -459,11 +467,18 @@ def get_video_stream_url_sync(video_id: str) -> Dict:
                     has_audio = info.get('acodec') and info.get('acodec') != 'none'
                     
                     if has_video and has_audio:
-                        fps = info.get('fps', 30)
-                        vbr = info.get('vbr', 0)
+                        # FIXED: Safe handling of None values
+                        fps = info.get('fps')
+                        vbr = info.get('vbr')
+                        
+                        # Safe FPS handling
+                        fps = fps if fps is not None and fps > 0 else 30
+                        
+                        # Safe bitrate handling  
+                        vbr = vbr if vbr is not None and vbr > 0 else 0
                         
                         quality_detail = quality
-                        if fps and fps > 30:
+                        if fps > 30:
                             quality_detail += f"{fps}fps"
                         if vbr > 0:
                             quality_detail += f" ({vbr}kbps)"
