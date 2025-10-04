@@ -9,6 +9,8 @@ from pydantic import BaseModel
 import hashlib
 from datetime import datetime
 import gc
+import subprocess 
+from datetime import datetime, time
 
 # Importing other classes
 from AdvancedCache import AdvancedCache
@@ -85,6 +87,31 @@ video_executors = [
     for i in range(3)
 ]
 
+async def update_yt_dlp_daily():
+    """Run pip install -U yt-dlp daily at 12:00 AM"""
+    while True:
+        now = datetime.now()
+        target = datetime.combine(now.date(), time(0, 0))  # Today at 00:00
+        if now >= target:
+            target = datetime.combine(now.date(), time(0, 0))  # reset today
+            target = target.replace(day=now.day + 1)  # move to next day
+        
+        wait_seconds = (target - now).total_seconds()
+        print(f"[CRON] Next yt-dlp update scheduled in {wait_seconds/3600:.2f} hours")
+
+        # Wait until midnight
+        await asyncio.sleep(wait_seconds)
+
+        print("[CRON] Running yt-dlp auto-update...")
+        try:
+            subprocess.run(
+                ["python", "-m", "pip", "install", "-U", "yt-dlp"],
+                check=True
+            )
+            print("[CRON] yt-dlp update completed successfully.")
+        except subprocess.CalledProcessError as e:
+            print(f"[CRON] yt-dlp update failed: {e}")
+
 # Background task for cache cleanup
 async def periodic_cache_cleanup():
     """Periodically clean up expired cache entries"""
@@ -104,6 +131,7 @@ async def periodic_cache_cleanup():
 @app.on_event("startup")
 async def startup_event():
     asyncio.create_task(periodic_cache_cleanup())
+    asyncio.create_task(update_yt_dlp_daily())
     print("🚀 High-Performance API started with MP3-only audio streams!")
 
 async def cleanup_executors():
