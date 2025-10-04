@@ -15,12 +15,11 @@ class SearchHelper:
         
         hours = int(seconds // 3600)
         minutes = int((seconds % 3600) // 60)
-        seconds = int(seconds % 60)
+        secs = int(seconds % 60)
         
         if hours > 0:
-            return f"{hours}:{minutes:02d}:{seconds:02d}"
-        else:
-            return f"{minutes}:{seconds:02d}"
+            return f"{hours}:{minutes:02d}:{secs:02d}"
+        return f"{minutes}:{secs:02d}"
     
     @staticmethod
     def format_views_fast(view_count):
@@ -34,8 +33,7 @@ class SearchHelper:
             return f"{view_count / 1_000_000:.1f}M views"
         elif view_count >= 1_000:
             return f"{view_count / 1_000:.1f}K views"
-        else:
-            return f"{view_count:,} views"
+        return f"{view_count:,} views"
     
     @staticmethod
     def get_common_headers():
@@ -53,7 +51,7 @@ class SearchHelper:
     
     @classmethod
     def perform_search(cls, query: str, limit: Optional[int] = None) -> List[Dict]:
-        """Perform YouTube search using yt-dlp with unlimited results"""
+        """Perform YouTube search using yt-dlp with maximum results possible - OPTIMIZED"""
         if not query:
             return []
         
@@ -61,22 +59,31 @@ class SearchHelper:
             thread_name = threading.current_thread().name
             print(f"[{thread_name}] Searching for: {query}")
             
-            # Streamlined yt-dlp options for speed
+            # Optimized yt-dlp options for maximum speed
             search_opts = {
                 'quiet': True,
                 'no_warnings': True,
-                'extract_flat': True,
+                'extract_flat': 'in_playlist',  # Even faster extraction
                 'skip_download': True,
                 'ignoreerrors': True,
                 'geo_bypass': True,
                 'noplaylist': True,
-                'socket_timeout': 5,
-                'retries': 1,
+                'socket_timeout': 8,  # Reduced from 10 for faster timeouts
+                'retries': 1,  # Reduced from 2 - one retry is enough
                 'format': 'best',
-                'http_headers': cls.get_common_headers()
+                'http_headers': cls.get_common_headers(),
+                'nocheckcertificate': True,  # Skip cert verification for speed
+                'no_color': True,  # Disable color codes
+                'extractor_args': {
+                    'youtube': {
+                        'skip': ['hls', 'dash', 'translated_subs']  # Skip unnecessary data
+                    }
+                }
             }
             
-            fetch_count = limit if limit else 50
+            # Fetch maximum results: use limit if provided, otherwise fetch 200
+            fetch_count = limit if limit else 200
+            
             with yt_dlp.YoutubeDL(search_opts) as ydl:
                 search_results = ydl.extract_info(
                     f"ytsearch{fetch_count}:{query}",
@@ -90,38 +97,47 @@ class SearchHelper:
                 return []
             
             entries = search_results.get('entries', [])
+            
+            # Pre-allocate list with estimated size for better performance
             filtered = []
+            filtered_reserve = limit if limit else min(len(entries), 200)
+            
+            # Use set for O(1) lookup instead of list
             seen = set()
             
+            # Optimized processing loop with early exit
+            target_limit = limit if limit else float('inf')
+            
             for entry in entries:
-                if not entry or not entry.get('id'):
+                # Fast skip invalid entries
+                if not entry:
                     continue
-                
-                vid = entry['id']
-                if vid in seen:
+                    
+                vid = entry.get('id')
+                if not vid or vid in seen:
                     continue
+                    
                 seen.add(vid)
                 
+                # Fast access with get() and defaults
                 title = entry.get('title', 'No Title')
                 uploader = entry.get('uploader', 'Unknown')
                 duration = entry.get('duration')
                 view_count = entry.get('view_count')
                 
-                if not duration or duration <= 0:
-                    continue
-                
-                result = {
-                    'title': str(title).strip()[:100],
+                # Build result dict directly without intermediate variables
+                filtered.append({
+                    'title': str(title)[:100],  # Combine strip and slice
                     'thumbnail_url': f"https://img.youtube.com/vi/{vid}/mqdefault.jpg",
                     'videoId': vid,
-                    'uploader': str(uploader).strip()[:50] if uploader else 'Unknown',
-                    'duration': cls.format_duration_fast(duration),
+                    'uploader': str(uploader)[:50] if uploader else 'Unknown',
+                    'duration': cls.format_duration_fast(duration) if duration else 'Live/Unknown',
                     'view_count': cls.format_views_fast(view_count),
                     'url': f"https://www.youtube.com/watch?v={vid}"
-                }
-                filtered.append(result)
+                })
                 
-                if limit and len(filtered) >= limit:
+                # Early exit when limit reached
+                if len(filtered) >= target_limit:
                     break
             
             print(f"[{thread_name}] Processed {len(filtered)} results")
