@@ -17,7 +17,7 @@ from datetime import datetime, timedelta
 import weakref
 import gc
 
-app = FastAPI(title="High-Performance Music Streaming API", version="2.0.0")
+app = FastAPI(title="HanyaMusic Music Streaming API", version="3.0.0")
 
 # Enable CORS for React Native
 app.add_middleware(
@@ -404,6 +404,7 @@ def get_video_stream_url_sync(video_id: str) -> Dict:
             'no_warnings': True,
             'extractor_retries': 2,
             'fragment_retries': 2,
+            'merge_output_format': 'mp4',
             'socket_timeout': 20,  # Optimized timeout
             'http_headers': {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -921,49 +922,13 @@ async def format_info():
     }
 
 if __name__ == "__main__":
-    print("🚀 Starting ULTRA HIGH-PERFORMANCE Music Streaming API with MP3-ONLY AUDIO...")
-    print("🏗️  Advanced Architecture:")
-    print("   • Search: 3 pools × 4 threads = 12 concurrent threads")
-    print("   • Audio Stream (MP3 ONLY): 3 pools × 4 threads = 12 concurrent threads") 
-    print("   • Video Stream: 3 pools × 4 threads = 12 concurrent threads")
-    print("   • Total Worker Threads: 36")
-    print("🎵 AUDIO FORMAT GUARANTEE:")
-    print("   • ALL /stream endpoints return MP3 format ONLY")
-    print("   • 320kbps quality preferred (varies based on source)")
-    print("   • FFmpeg post-processing ensures MP3 conversion")
-    print("   • Universal compatibility across all devices")
-    print("🧠 Intelligent Features:")
-    print("   • Advanced LRU Caching with TTL")
-    print("   • Request Deduplication")
-    print("   • Intelligent Load Balancing")
-    print("   • Automatic Memory Management")
-    print("   • Real-time Performance Monitoring")
-    print("   • MP3-only audio format enforcement")
+    print("🚀 ==> HanyaMusic Music Streaming API <==")
     print("🌐 API will be available at: http://localhost:8000")
     print("📚 Documentation at: http://localhost:8000/docs")
     print("📊 Performance Stats: http://localhost:8000/stats")
     print("📈 Real-time Metrics: http://localhost:8000/performance/realtime")
     print("🗄️  Cache Management: http://localhost:8000/cache/stats")
     print("🎵 Format Info: http://localhost:8000/format/info")
-    print("")
-    print("🎯 Endpoints (All Optimized for Multiple Concurrent Devices):")
-    print("  - /search?q=query&limit=10 [12 threads + caching + deduplication]")
-    print("  - /stream/VIDEO_ID [12 threads + caching + deduplication + MP3 ONLY]")
-    print("  - /streamvideo/VIDEO_ID [12 threads + caching + deduplication]")
-    print("")
-    print("💡 MP3-Only Audio Benefits:")
-    print("  ✅ Guaranteed MP3 format on all devices")
-    print("  ✅ Universal compatibility (iOS, Android, Web, Desktop)")
-    print("  ✅ Consistent audio quality and encoding")
-    print("  ✅ No format-specific playback issues")
-    print("  ✅ FFmpeg post-processing ensures format conversion")
-    print("")
-    print("💡 Multiple Device Performance Benefits:")
-    print("  ✅ Same requests from different devices share cached results")
-    print("  ✅ Duplicate requests are deduplicated automatically") 
-    print("  ✅ Load balanced across multiple thread pools")
-    print("  ✅ No performance degradation with concurrent users")
-    print("  ✅ Intelligent memory management prevents slowdowns")
     
     uvicorn.run(
         "app:app",
@@ -974,52 +939,6 @@ if __name__ == "__main__":
         access_log=True,
         workers=1  # Single worker for shared cache
     )
-
-## 🚀 ULTRA HIGH-PERFORMANCE OPTIMIZATIONS WITH MP3-ONLY AUDIO:
-
-## 🎵 MP3 FORMAT GUARANTEE:
-## ✅ ALL /stream endpoints return MP3 format ONLY
-## ✅ FFmpeg post-processing converts any audio source to MP3
-## ✅ 320kbps quality preferred (adapts based on source)
-## ✅ Universal compatibility across all devices and platforms
-## ✅ No more WebM, M4A, or other format compatibility issues
-
-## 🏗️ ARCHITECTURE IMPROVEMENTS:
-## ✅ 36 total worker threads (3 pools × 4 threads × 3 endpoints)
-## ✅ Load balancing distributes requests across multiple thread pools
-## ✅ Each endpoint has dedicated pools to prevent blocking
-## ✅ MP3-specific caching with separate cache keys
-
-## 🧠 INTELLIGENT CACHING:
-## ✅ LRU cache with TTL expiration (15min search, 60min MP3 audio, 45min video)
-## ✅ Same requests from multiple devices instantly served from cache
-## ✅ Automatic cache cleanup prevents memory bloat
-## ✅ Hit ratio tracking for performance monitoring
-## ✅ MP3-specific cache keys to avoid format conflicts
-
-## 🔄 REQUEST DEDUPLICATION:
-## ✅ Identical requests processed only once, shared across all devices
-## ✅ Prevents duplicate YouTube API calls for same content
-## ✅ Async waiting system for concurrent identical requests
-## ✅ MP3 processing deduplication to prevent redundant conversions
-
-## ⚖️ LOAD BALANCING:
-## ✅ Intelligent executor selection based on current load
-## ✅ Request counting and distribution across thread pools
-## ✅ Prevents any single thread pool from being overwhelmed
-
-## 📊 PERFORMANCE MONITORING:
-## ✅ Real-time thread utilization tracking
-## ✅ Cache performance metrics and hit ratios
-## ✅ Active request monitoring and deduplication stats
-## ✅ MP3 format guarantee monitoring
-
-## 🎯 MULTI-DEVICE BENEFITS:
-## • Device A requests MP3 stream for "song123" → processed fresh, cached
-## • Device B requests same → instant MP3 cache response
-## • Device C requests same while A is processing → waits for A's MP3 result
-## • Device D requests different song → uses different thread pool
-## • All devices get consistent MP3 format regardless of original source
 
 ## Usage Examples:
 ## Search: /search?q=aespa (cached for 15min, deduplicated)
