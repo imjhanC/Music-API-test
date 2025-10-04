@@ -1027,3 +1027,8 @@ if __name__ == "__main__":
 ## Video: /streamvideo/5oQVTnq-UKk (cached for 45min, deduplicated)
 ## Stats: /stats (real-time performance metrics + MP3 info)
 ## Format: /format/info (MP3 format guarantee details)
+
+
+## To start with ngrok:
+## ngrok http --domain=instinctually-monosodium-shawnda.ngrok-free.app 8000
+## https://instinctually-monosodium-shawnda.ngrok-free.app/
