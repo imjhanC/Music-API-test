@@ -17,6 +17,11 @@ from datetime import datetime, timedelta
 import weakref
 import gc
 
+# Importing other classes here 
+from AdvancedCache import AdvancedCache
+from RequestDeduplicator import RequestDeduplicator
+from LoadBalancer import LoadBalancer
+
 app = FastAPI(title="HanyaMusic Music Streaming API", version="3.0.0")
 
 # Enable CORS for React Native
@@ -42,8 +47,8 @@ class StreamResponse(BaseModel):
     title: str
     duration: int
     thumbnail_url: str
-    format: str  # Added to show the audio format
-    quality: str  # Added to show audio quality details
+    format: str  
+    quality: str 
     cached: Optional[bool] = False
 
 class VideoStreamResponse(BaseModel):
@@ -56,127 +61,13 @@ class VideoStreamResponse(BaseModel):
     stream_type: str
     cached: Optional[bool] = False
 
-# ADVANCED CACHING SYSTEM
-class AdvancedCache:
-    def __init__(self, max_size: int = 1000, ttl_minutes: int = 30):
-        self.cache = {}
-        self.access_times = {}
-        self.max_size = max_size
-        self.ttl = timedelta(minutes=ttl_minutes)
-        self.lock = threading.RLock()
-        
-    def get(self, key: str) -> Optional[Dict]:
-        with self.lock:
-            if key in self.cache:
-                # Check if expired
-                if datetime.now() - self.access_times[key] > self.ttl:
-                    del self.cache[key]
-                    del self.access_times[key]
-                    return None
-                
-                # Update access time for LRU
-                self.access_times[key] = datetime.now()
-                return self.cache[key].copy()
-            return None
-    
-    def set(self, key: str, value: Dict):
-        with self.lock:
-            # Clean up expired entries
-            self._cleanup_expired()
-            
-            # If cache is full, remove oldest entries
-            if len(self.cache) >= self.max_size:
-                self._evict_lru()
-            
-            self.cache[key] = value.copy()
-            self.access_times[key] = datetime.now()
-    
-    def _cleanup_expired(self):
-        current_time = datetime.now()
-        expired_keys = [
-            key for key, access_time in self.access_times.items()
-            if current_time - access_time > self.ttl
-        ]
-        for key in expired_keys:
-            del self.cache[key]
-            del self.access_times[key]
-    
-    def _evict_lru(self):
-        # Remove 20% of oldest entries
-        items_to_remove = max(1, len(self.cache) // 5)
-        sorted_items = sorted(self.access_times.items(), key=lambda x: x[1])
-        for key, _ in sorted_items[:items_to_remove]:
-            del self.cache[key]
-            del self.access_times[key]
-    
-    def clear(self):
-        with self.lock:
-            self.cache.clear()
-            self.access_times.clear()
-    
-    def stats(self):
-        with self.lock:
-            return {
-                "size": len(self.cache),
-                "max_size": self.max_size,
-                "hit_ratio": getattr(self, '_hits', 0) / max(getattr(self, '_requests', 1), 1)
-            }
-
 # Global caches for each endpoint
 search_cache = AdvancedCache(max_size=500, ttl_minutes=15)  # Search results change less frequently
 audio_cache = AdvancedCache(max_size=1000, ttl_minutes=60)  # Audio URLs last longer
 video_cache = AdvancedCache(max_size=800, ttl_minutes=45)   # Video URLs last moderately long
 
 # REQUEST DEDUPLICATION SYSTEM
-class RequestDeduplicator:
-    def __init__(self):
-        self.active_requests = {}
-        self.lock = threading.RLock()
-    
-    async def get_or_execute(self, key: str, coro_func, *args, **kwargs):
-        with self.lock:
-            if key in self.active_requests:
-                # Wait for existing request to complete
-                print(f"[DEDUP] Waiting for existing request: {key}")
-                return await self.active_requests[key]
-        
-        # Create new request
-        print(f"[DEDUP] Creating new request: {key}")
-        future = asyncio.create_task(coro_func(*args, **kwargs))
-        
-        with self.lock:
-            self.active_requests[key] = future
-        
-        try:
-            result = await future
-            return result
-        finally:
-            with self.lock:
-                self.active_requests.pop(key, None)
-
 request_deduplicator = RequestDeduplicator()
-
-# ENHANCED RATE LIMITING AND LOAD BALANCING
-class LoadBalancer:
-    def __init__(self):
-        self.request_counts = defaultdict(int)
-        self.last_reset = datetime.now()
-        self.lock = threading.RLock()
-    
-    def get_least_loaded_executor(self, executors: List[concurrent.futures.ThreadPoolExecutor]) -> concurrent.futures.ThreadPoolExecutor:
-        with self.lock:
-            # Reset counters every minute
-            if datetime.now() - self.last_reset > timedelta(minutes=1):
-                self.request_counts.clear()
-                self.last_reset = datetime.now()
-            
-            # Find executor with least active requests
-            best_executor = min(executors, key=lambda e: len(e._threads) if e._threads else 0)
-            executor_id = id(best_executor)
-            self.request_counts[executor_id] += 1
-            
-            return best_executor
-
 load_balancer = LoadBalancer()
 
 def format_duration_fast(seconds):
