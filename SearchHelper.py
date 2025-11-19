@@ -82,8 +82,7 @@ class SearchHelper:
             }
             
             # Fetch maximum results: use limit if provided, otherwise fetch 200
-            fetch_count = limit if limit else 200
-            
+            fetch_count = limit if limit else 20
             with yt_dlp.YoutubeDL(search_opts) as ydl:
                 search_results = ydl.extract_info(
                     f"ytsearch{fetch_count}:{query}",
@@ -106,7 +105,7 @@ class SearchHelper:
             seen = set()
             
             # Optimized processing loop with early exit
-            target_limit = limit if limit else float('inf')
+            target_limit = limit if limit else 20
             
             for entry in entries:
                 # Fast skip invalid entries
