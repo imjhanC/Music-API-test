@@ -81,8 +81,8 @@ class SearchHelper:
                 }
             }
             
-            # Fetch maximum results: use limit if provided, otherwise fetch 200
-            fetch_count = limit if limit else 200
+            # Fetch maximum results: use limit if provided, otherwise fetch 20
+            fetch_count = limit if limit else 20
             
             with yt_dlp.YoutubeDL(search_opts) as ydl:
                 search_results = ydl.extract_info(
@@ -100,7 +100,7 @@ class SearchHelper:
             
             # Pre-allocate list with estimated size for better performance
             filtered = []
-            filtered_reserve = limit if limit else min(len(entries), 200)
+            filtered_reserve = limit if limit else min(len(entries), 20)
             
             # Use set for O(1) lookup instead of list
             seen = set()

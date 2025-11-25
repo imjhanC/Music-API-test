@@ -87,14 +87,41 @@ video_executors = [
     for i in range(3)
 ]
 
+async def run_yt_dlp_update():
+    """Helper function to run yt-dlp update"""
+    print("[YT-DLP] Running yt-dlp update...")
+    try:
+        result = subprocess.run(
+            ["python", "-m", "pip", "install", "-U", "yt-dlp"],
+            check=True,
+            capture_output=True,
+            text=True
+        )
+        print("[YT-DLP] Update completed successfully.")
+        if result.stdout:
+            print(f"[YT-DLP] Output: {result.stdout}")
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"[YT-DLP] Update failed: {e}")
+        if e.stderr:
+            print(f"[YT-DLP] Error: {e.stderr}")
+        return False
+
 async def update_yt_dlp_daily():
     """Run pip install -U yt-dlp daily at 12:00 AM"""
+    # Run immediately on startup
+    print("[STARTUP] Running initial yt-dlp update...")
+    await run_yt_dlp_update()
+    
+    # Then schedule daily updates
     while True:
         now = datetime.now()
-        target = datetime.combine(now.date(), time(0, 0))  # Today at 00:00
+        # Calculate next midnight
+        target = datetime.combine(now.date(), time(0, 0))
         if now >= target:
-            target = datetime.combine(now.date(), time(0, 0))  # reset today
-            target = target.replace(day=now.day + 1)  # move to next day
+            # If it's already past midnight today, schedule for tomorrow
+            from datetime import timedelta
+            target = target + timedelta(days=1)
         
         wait_seconds = (target - now).total_seconds()
         print(f"[CRON] Next yt-dlp update scheduled in {wait_seconds/3600:.2f} hours")
@@ -102,15 +129,8 @@ async def update_yt_dlp_daily():
         # Wait until midnight
         await asyncio.sleep(wait_seconds)
 
-        print("[CRON] Running yt-dlp auto-update...")
-        try:
-            subprocess.run(
-                ["python", "-m", "pip", "install", "-U", "yt-dlp"],
-                check=True
-            )
-            print("[CRON] yt-dlp update completed successfully.")
-        except subprocess.CalledProcessError as e:
-            print(f"[CRON] yt-dlp update failed: {e}")
+        # Run the update
+        await run_yt_dlp_update()
 
 # Background task for cache cleanup
 async def periodic_cache_cleanup():
@@ -160,7 +180,8 @@ async def root():
                 "Request deduplication", 
                 "Load balancing",
                 "Multiple thread pools per endpoint",
-                "MP3-only audio streaming"
+                "MP3-only audio streaming",
+                "Auto yt-dlp updates (startup + daily at midnight)"
             ]
         }
     }
@@ -342,7 +363,8 @@ async def performance_stats():
             "Intelligent load balancing across thread pools",
             "Automatic cache cleanup and memory management",
             "Optimized timeouts for faster response times",
-            "MP3-only audio format enforcement with FFmpeg post-processing"
+            "MP3-only audio format enforcement with FFmpeg post-processing",
+            "Auto yt-dlp updates on startup and daily at midnight"
         ],
         "cache_performance": {
             "search_cache": {
@@ -465,7 +487,8 @@ async def format_info():
             "All /stream endpoints return MP3 format only",
             "No other audio formats (WebM, M4A, etc.) will be returned",
             "FFmpeg post-processing converts to MP3 if needed",
-            "High quality 320kbps preferred when available"
+            "High quality 320kbps preferred when available",
+            "Auto yt-dlp updates on startup and daily at midnight"
         ]
     }
 
@@ -477,6 +500,7 @@ if __name__ == "__main__":
     print("📈 Real-time Metrics: http://localhost:8000/performance/realtime")
     print("🗄️  Cache Management: http://localhost:8000/cache/stats")
     print("🎵 Format Info: http://localhost:8000/format/info")
+    print("🔄 Auto-Update: yt-dlp updates on startup + daily at midnight")
     
     uvicorn.run(
         "app:app",
@@ -487,14 +511,3 @@ if __name__ == "__main__":
         access_log=True,
         workers=1
     )
-
-# Usage Examples:
-# Search: /search?q=aespa (cached for 15min, deduplicated)
-# Audio: /stream/5oQVTnq-UKk (MP3 ONLY, cached for 60min, deduplicated) 
-# Video: /streamvideo/5oQVTnq-UKk (cached for 45min, deduplicated)
-# Stats: /stats (real-time performance metrics + MP3 info)
-# Format: /format/info (MP3 format guarantee details)
-
-# To start with ngrok:
-# ngrok http --domain=instinctually-monosodium-shawnda.ngrok-free.app 8000
-# https://instinctually-monosodium-shawnda.ngrok-free.app/

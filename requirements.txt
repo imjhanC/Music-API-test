@@ -6,3 +6,4 @@ pytube
 yt-dlp
 requests
 bs4
+asyncio
