@@ -106,7 +106,7 @@ class SearchHelper:
             seen = set()
             
             # Optimized processing loop with early exit
-            target_limit = limit if limit else float('inf')
+            target_limit = limit if limit else 20
             
             for entry in entries:
                 # Fast skip invalid entries
