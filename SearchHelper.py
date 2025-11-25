@@ -50,71 +50,6 @@ class SearchHelper:
         }
     
     @classmethod
-    def get_highest_quality_thumbnail(cls, video_id: str) -> str:
-        """Get the highest available quality thumbnail for a video"""
-        # Quality levels in descending order (highest first)
-        qualities = [
-            'maxresdefault.jpg',  # Maximum resolution (often 1280x720 or higher)
-            'sddefault.jpg',      # Standard definition (640x480)
-            'hqdefault.jpg',      # High quality (480x360)
-            'mqdefault.jpg',      # Medium quality (320x180)
-            'default.jpg',        # Default quality (120x90)
-        ]
-        
-        return f"https://img.youtube.com/vi/{video_id}/{qualities[0]}"
-    
-    @classmethod
-    def extract_thumbnail_from_info(cls, info: Dict, video_id: str) -> str:
-        """Extract the best thumbnail from yt-dlp info dict"""
-        # Try thumbnails list first (most reliable)
-        thumbnails = info.get('thumbnails')
-        if thumbnails:
-            # Get thumbnail with highest resolution
-            try:
-                best_thumb = max(
-                    thumbnails, 
-                    key=lambda x: x.get('width', 0) * x.get('height', 0),
-                    default=None
-                )
-                if best_thumb and best_thumb.get('url'):
-                    return best_thumb['url']
-            except (KeyError, TypeError, ValueError):
-                pass  # Fall through to other methods
-        
-        # Try direct thumbnail field
-        if info.get('thumbnail'):
-            return info['thumbnail']
-        
-        # Final fallback to maxresdefault
-        return cls.get_highest_quality_thumbnail(video_id)
-    
-    @classmethod
-    def get_best_thumbnail_from_entry(cls, entry: Dict, video_id: str) -> str:
-        """Extract the best available thumbnail from search entry"""
-        # Try to get thumbnails list from entry
-        thumbnails = entry.get('thumbnails')
-        if thumbnails:
-            try:
-                # Sort by quality (width * height) descending and get the highest
-                sorted_thumbs = sorted(
-                    thumbnails, 
-                    key=lambda x: x.get('width', 0) * x.get('height', 0), 
-                    reverse=True
-                )
-                if sorted_thumbs and sorted_thumbs[0].get('url'):
-                    return sorted_thumbs[0].get('url')
-            except (KeyError, TypeError, ValueError):
-                pass  # Fall through to other methods
-        
-        # Fallback: try to get thumbnail directly from entry
-        thumbnail = entry.get('thumbnail')
-        if thumbnail:
-            return thumbnail
-        
-        # Final fallback: use YouTube's maxresdefault
-        return cls.get_highest_quality_thumbnail(video_id)
-    
-    @classmethod
     def perform_search(cls, query: str, limit: Optional[int] = None) -> List[Dict]:
         """Perform YouTube search using yt-dlp with maximum results possible - OPTIMIZED"""
         if not query:
@@ -124,34 +59,30 @@ class SearchHelper:
             thread_name = threading.current_thread().name
             print(f"[{thread_name}] Searching for: {query}")
             
-            # Enhanced yt-dlp options to get thumbnail info
+            # Optimized yt-dlp options for maximum speed
             search_opts = {
                 'quiet': True,
                 'no_warnings': True,
-                'extract_flat': False,  # Set to False to get full info including thumbnails
+                'extract_flat': 'in_playlist',  # Even faster extraction
                 'skip_download': True,
                 'ignoreerrors': True,
                 'geo_bypass': True,
                 'noplaylist': True,
-                'socket_timeout': 8,
-                'retries': 1,
+                'socket_timeout': 8,  # Reduced from 10 for faster timeouts
+                'retries': 1,  # Reduced from 2 - one retry is enough
                 'format': 'best',
                 'http_headers': cls.get_common_headers(),
-                'nocheckcertificate': True,
-                'no_color': True,
+                'nocheckcertificate': True,  # Skip cert verification for speed
+                'no_color': True,  # Disable color codes
                 'extractor_args': {
                     'youtube': {
-                        'skip': ['hls', 'dash', 'translated_subs']
+                        'skip': ['hls', 'dash', 'translated_subs']  # Skip unnecessary data
                     }
-                },
-                # Add these to get thumbnail information
-                'writethumbnail': False,  # Don't download, just get info
-                'writeinfojson': False,
+                }
             }
             
-            # Fetch maximum results: use limit if provided, otherwise fetch 20
+            # Fetch maximum results: use limit if provided, otherwise fetch 200
             fetch_count = limit if limit else 20
-            
             with yt_dlp.YoutubeDL(search_opts) as ydl:
                 search_results = ydl.extract_info(
                     f"ytsearch{fetch_count}:{query}",
@@ -193,13 +124,11 @@ class SearchHelper:
                 duration = entry.get('duration')
                 view_count = entry.get('view_count')
                 
-                # Get the best available thumbnail using enhanced method
-                thumbnail_url = cls.get_best_thumbnail_from_entry(entry, vid)
-                
                 # Build result dict directly without intermediate variables
+                # Changed to maxresdefault for highest quality thumbnails
                 filtered.append({
                     'title': str(title)[:100],  # Combine strip and slice
-                    'thumbnail_url': thumbnail_url,  # Use enhanced high-quality thumbnail
+                    'thumbnail_url': f"https://img.youtube.com/vi/{vid}/maxresdefault.jpg",
                     'videoId': vid,
                     'uploader': str(uploader)[:50] if uploader else 'Unknown',
                     'duration': cls.format_duration_fast(duration) if duration else 'Live/Unknown',
@@ -241,9 +170,7 @@ class SearchHelper:
                 'extractor_retries': 1,
                 'fragment_retries': 1,
                 'socket_timeout': 15,
-                'http_headers': cls.get_common_headers(),
-                # Add this to get thumbnail info
-                'writethumbnail': False,
+                'http_headers': cls.get_common_headers()
             }
             
             print(f"[{thread_name}] Extracting MP3 audio stream for {video_id}")
@@ -252,9 +179,6 @@ class SearchHelper:
                 info = ydl.extract_info(youtube_url, download=False)
                 
                 if info and info.get('url'):
-                    # Get the best thumbnail from info using enhanced method
-                    thumbnail_url = cls.extract_thumbnail_from_info(info, video_id)
-                    
                     # Get audio quality information
                     quality_info = "320kbps MP3"
                     if info.get('abr'):
@@ -267,7 +191,7 @@ class SearchHelper:
                         'stream_url': info['url'],
                         'title': info.get('title', 'Unknown Title'),
                         'duration': info.get('duration', 0),
-                        'thumbnail_url': thumbnail_url,  # Use enhanced high-quality thumbnail
+                        'thumbnail_url': f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg",
                         'format': 'mp3',
                         'quality': quality_info
                     }
@@ -323,9 +247,7 @@ class SearchHelper:
                 'fragment_retries': 2,
                 'merge_output_format': 'mp4',
                 'socket_timeout': 20,
-                'http_headers': cls.get_common_headers(),
-                # Add this to get thumbnail info
-                'writethumbnail': False,
+                'http_headers': cls.get_common_headers()
             }
             
             print(f"[{thread_name}] Extracting highest quality video stream for {video_id}")
@@ -334,9 +256,6 @@ class SearchHelper:
                 info = ydl.extract_info(youtube_url, download=False)
                 
                 if info:
-                    # Get the best thumbnail from info using enhanced method
-                    thumbnail_url = cls.extract_thumbnail_from_info(info, video_id)
-                    
                     # Check for separate streams (preferred)
                     if 'requested_formats' in info and info['requested_formats']:
                         video_url = None
@@ -382,7 +301,7 @@ class SearchHelper:
                                 'audio_url': audio_url,
                                 'title': info.get('title', 'Unknown Title'),
                                 'duration': info.get('duration', 0),
-                                'thumbnail_url': thumbnail_url,  # Use enhanced high-quality thumbnail
+                                'thumbnail_url': f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg",
                                 'quality': quality_detail,
                                 'stream_type': 'separate'
                             }
@@ -420,7 +339,7 @@ class SearchHelper:
                                 'video_url': info['url'],
                                 'title': info.get('title', 'Unknown Title'),
                                 'duration': info.get('duration', 0),
-                                'thumbnail_url': thumbnail_url,  # Use enhanced high-quality thumbnail
+                                'thumbnail_url': f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg",
                                 'quality': quality_detail,
                                 'stream_type': 'combined'
                             }
