@@ -511,3 +511,14 @@ if __name__ == "__main__":
         access_log=True,
         workers=1
     )
+
+# Usage Examples:
+# Search: /search?q=aespa (cached for 15min, deduplicated)
+# Audio: /stream/5oQVTnq-UKk (MP3 ONLY, cached for 60min, deduplicated) 
+# Video: /streamvideo/5oQVTnq-UKk (cached for 45min, deduplicated)
+# Stats: /stats (real-time performance metrics + MP3 info)
+# Format: /format/info (MP3 format guarantee details)
+
+# To start with ngrok:
+# ngrok http --domain=instinctually-monosodium-shawnda.ngrok-free.app 8000
+# https://instinctually-monosodium-shawnda.ngrok-free.app/
