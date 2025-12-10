@@ -49,6 +49,35 @@ class SearchHelper:
             'Upgrade-Insecure-Requests': '1',
         }
     
+    @staticmethod
+    def is_valid_video(entry: Dict) -> bool:
+        """Check if entry is a valid video (not shorts, reels, or channels) - FAST VERSION"""
+        if not entry:
+            return False
+        
+        # Get video ID and URL
+        video_id = entry.get('id', '')
+        url = entry.get('url', '')
+        title = entry.get('title', '').lower()
+        
+        # Check for shorts in URL or ID
+        if '/shorts/' in url or 'shorts' in video_id.lower():
+            return False
+        
+        # Check for valid video ID format (YouTube video IDs are exactly 11 characters)
+        if not video_id or len(video_id) != 11:
+            return False
+        
+        # Duration check - but handle None gracefully
+        duration = entry.get('duration')
+        if duration is not None:
+            # Filter out very short videos (likely shorts)
+            if duration < 61:
+                return False
+        # If duration is None, we'll allow it (it might be a live stream or we just don't have the info yet)
+        
+        return True
+    
     @classmethod
     def perform_search(cls, query: str, limit: Optional[int] = None) -> List[Dict]:
         """Perform YouTube search using yt-dlp with maximum results possible - OPTIMIZED"""
@@ -57,35 +86,38 @@ class SearchHelper:
         
         try:
             thread_name = threading.current_thread().name
-            print(f"[{thread_name}] Searching for: {query}")
             
-            # Optimized yt-dlp options for maximum speed
+            # Clean and normalize the query - this fixes the trailing space issue
+            clean_query = query.strip()
+            print(f"[{thread_name}] Searching for: '{clean_query}'")
+            
+            # Optimized yt-dlp options - KEEP extract_flat for speed
             search_opts = {
                 'quiet': True,
                 'no_warnings': True,
-                'extract_flat': 'in_playlist',  # Even faster extraction
+                'extract_flat': 'in_playlist',  # Keep this for SPEED - we'll filter smartly
                 'skip_download': True,
                 'ignoreerrors': True,
                 'geo_bypass': True,
                 'noplaylist': True,
-                'socket_timeout': 8,  # Reduced from 10 for faster timeouts
-                'retries': 1,  # Reduced from 2 - one retry is enough
+                'socket_timeout': 8,
+                'retries': 1,
                 'format': 'best',
                 'http_headers': cls.get_common_headers(),
-                'nocheckcertificate': True,  # Skip cert verification for speed
-                'no_color': True,  # Disable color codes
+                'nocheckcertificate': True,
+                'no_color': True,
                 'extractor_args': {
                     'youtube': {
-                        'skip': ['hls', 'dash', 'translated_subs']  # Skip unnecessary data
+                        'skip': ['hls', 'dash', 'translated_subs']
                     }
                 }
             }
             
-            # Fetch maximum results: use limit if provided, otherwise fetch 200
-            fetch_count = limit if limit else 20
+            # Fetch more results to account for filtering (2x instead of 3x for speed)
+            fetch_count = (limit * 2) if limit else 40
             with yt_dlp.YoutubeDL(search_opts) as ydl:
                 search_results = ydl.extract_info(
-                    f"ytsearch{fetch_count}:{query}",
+                    f"ytsearch{fetch_count}:{clean_query}",
                     download=False
                 )
             
@@ -97,19 +129,17 @@ class SearchHelper:
             
             entries = search_results.get('entries', [])
             
-            # Pre-allocate list with estimated size for better performance
             filtered = []
-            filtered_reserve = limit if limit else min(len(entries), 20)
-            
-            # Use set for O(1) lookup instead of list
             seen = set()
-            
-            # Optimized processing loop with early exit
             target_limit = limit if limit else 20
             
             for entry in entries:
                 # Fast skip invalid entries
                 if not entry:
+                    continue
+                
+                # Validate video (filter shorts, reels, channels) - using fast validation
+                if not cls.is_valid_video(entry):
                     continue
                     
                 vid = entry.get('id')
@@ -124,10 +154,9 @@ class SearchHelper:
                 duration = entry.get('duration')
                 view_count = entry.get('view_count')
                 
-                # Build result dict directly without intermediate variables
-                # Changed to maxresdefault for highest quality thumbnails
+                # Build result dict directly
                 filtered.append({
-                    'title': str(title)[:100],  # Combine strip and slice
+                    'title': str(title)[:100],
                     'thumbnail_url': f"https://img.youtube.com/vi/{vid}/maxresdefault.jpg",
                     'videoId': vid,
                     'uploader': str(uploader)[:50] if uploader else 'Unknown',
@@ -140,7 +169,7 @@ class SearchHelper:
                 if len(filtered) >= target_limit:
                     break
             
-            print(f"[{thread_name}] Processed {len(filtered)} results")
+            print(f"[{thread_name}] Processed {len(filtered)} valid results (filtered shorts/reels/channels)")
             return filtered
             
         except Exception as e:

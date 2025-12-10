@@ -513,11 +513,11 @@ if __name__ == "__main__":
     )
 
 # Usage Examples:
-# Search: /search?q=aespa (cached for 15min, deduplicated)
-# Audio: /stream/5oQVTnq-UKk (MP3 ONLY, cached for 60min, deduplicated) 
-# Video: /streamvideo/5oQVTnq-UKk (cached for 45min, deduplicated)
-# Stats: /stats (real-time performance metrics + MP3 info)
-# Format: /format/info (MP3 format guarantee details)
+# Search: /search?q=aespa 
+# Audio: /stream/5oQVTnq-UKk  
+# Video: /streamvideo/5oQVTnq-UKk 
+# Stats: /stats
+# Format: /format/info 
 
 # To start with ngrok:
 # ngrok http --domain=instinctually-monosodium-shawnda.ngrok-free.app 8000
